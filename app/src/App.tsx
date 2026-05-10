@@ -349,6 +349,14 @@ function StatusInfoRow({ label, value }: { label: string; value?: string | boole
   );
 }
 
+function vmHealthLabel(state?: string | null, status?: string | null) {
+  if (!status) return "Unknown";
+  if ((state ?? "").toLowerCase() === "off" && status.toLowerCase() === "operating normally") {
+    return "Configuration OK";
+  }
+  return status;
+}
+
 function EmptyState({ text }: { text: string }) {
   return <div className="empty-state">{text}</div>;
 }
@@ -817,8 +825,10 @@ export default function App() {
       setVm({ ...vm, state: "Starting", status: "Starting" });
     }
     const nextVm = await capture("Start VM", () => invoke<VmStatus>("start_vm", { vmName: config.vmName }));
-    if (nextVm) setVm(nextVm);
-    await pollVmLifecycle("running");
+    if (nextVm && nextVm.state.toLowerCase() !== "off") {
+      setVm(nextVm);
+    }
+    await pollVmLifecycle("running", "Starting", "off");
     setBusy(false);
   }
 
@@ -828,19 +838,28 @@ export default function App() {
       setVm({ ...vm, state: "Stopping", status: "Stopping" });
     }
     const nextVm = await capture("Stop VM", () => invoke<VmStatus>("stop_vm", { vmName: config.vmName }));
-    if (nextVm) setVm(nextVm);
-    await pollVmLifecycle("off");
+    if (nextVm && nextVm.state.toLowerCase() !== "running") {
+      setVm(nextVm);
+    }
+    await pollVmLifecycle("off", "Stopping", "running");
     setBusy(false);
   }
 
-  async function pollVmLifecycle(targetState: string) {
+  async function pollVmLifecycle(targetState: string, transitionState: string, staleState: string) {
+    let lastVm: VmStatus | null = null;
     for (let index = 0; index < 20; index += 1) {
       await delay(1500);
       const nextVm = await capture("VM lifecycle", () => invoke<VmStatus>("get_vm_status", { vmName: config.vmName }));
       if (!nextVm) return;
-      setVm(nextVm);
-      if (nextVm.state.toLowerCase() === targetState) return;
+      lastVm = nextVm;
+      const nextState = nextVm.state.toLowerCase();
+      if (nextState === targetState) {
+        setVm(nextVm);
+        return;
+      }
+      setVm(nextState === staleState ? { ...nextVm, state: transitionState, status: transitionState } : nextVm);
     }
+    if (lastVm) setVm(lastVm);
   }
 
   async function setBattleGroupRunning(running: boolean) {
@@ -1223,7 +1242,7 @@ export default function App() {
               <InfoRow label="Hyper-V" value={host?.hypervAvailable ? "Available" : "Unavailable"} />
               <InfoRow label="vmms service" value={host?.vmmsStatus} />
               <StatusInfoRow label="VM state" value={vm?.state} />
-              <InfoRow label="VM health" value={vm?.status} />
+              <InfoRow label="Hyper-V health" value={vmHealthLabel(vm?.state, vm?.status)} />
               <InfoRow label="Memory" value={vm ? formatBytes(vm.memoryAssignedBytes) : null} />
               <InfoRow label="Uptime" value={vm?.uptime} />
               <InfoRow label="VM path" value={vm?.path} />
