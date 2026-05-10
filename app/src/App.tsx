@@ -214,7 +214,21 @@ function asError(error: unknown): CommandFailure {
 
 function statusTone(value?: string | boolean | null) {
   const text = String(value ?? "").toLowerCase();
-  if (value === true || ["running", "ready", "connected", "online", "operating normally", "active"].includes(text)) {
+  if (
+    value === true ||
+    [
+      "running",
+      "ready",
+      "healthy",
+      "available",
+      "connected",
+      "online",
+      "operating normally",
+      "active",
+      "succeeded",
+      "ok"
+    ].includes(text)
+  ) {
     return "good";
   }
   if (value === false || ["stopped", "suspended", "disabled", "offline", "error", "failed"].includes(text)) {
