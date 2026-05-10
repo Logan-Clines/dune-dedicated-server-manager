@@ -7,4 +7,6 @@ pub struct AppState {
     pub token: Option<String>,
     pub director_base_url: Option<String>,
     pub http: reqwest::Client,
+    pub started_unix_ms: u128,
+    pub port: u16,
 }

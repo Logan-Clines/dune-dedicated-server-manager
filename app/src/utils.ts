@@ -14,7 +14,18 @@ export const defaultConfig: AppConfig = {
   managerApiDirectorUrl: ""
 };
 
-export const expectedManagerApiVersion = "0.1.3";
+export const expectedManagerApiVersion = "0.1.4";
+
+export function formatDuration(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "Unknown";
+  const whole = Math.floor(seconds);
+  const hours = Math.floor(whole / 3600);
+  const minutes = Math.floor((whole % 3600) / 60);
+  const secs = whole % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
+  if (minutes > 0) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+}
 
 export function formatBytes(bytes: number) {
   if (!bytes) return "0 GB";

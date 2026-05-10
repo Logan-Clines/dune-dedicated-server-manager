@@ -18,6 +18,7 @@ export type {
   ManagerPodSummary,
   ManagerServicePortSummary,
   ManagerServiceSummary,
+  ManagerSelfStatus,
   ManagerWorkloads,
   TelemetryEnvelope,
   Workloads

@@ -174,6 +174,54 @@
   overflow-wrap: anywhere;
 }
 
+.runtime-map-detail {
+  display: grid;
+  gap: 12px;
+}
+
+.director-detail-metrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.director-detail-metrics > div {
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid rgba(217, 168, 87, 0.14);
+  border-radius: 6px;
+  background: rgba(6, 9, 8, 0.56);
+}
+
+.director-detail-metrics strong,
+.director-detail-metrics span {
+  display: block;
+}
+
+.director-detail-metrics strong {
+  color: var(--teal-soft);
+  font-size: 20px;
+}
+
+.director-detail-metrics span {
+  margin-top: 5px;
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.director-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px 14px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.runtime-servers.detailed > div {
+  grid-template-columns: minmax(210px, 1.4fr) auto auto auto auto auto auto auto auto;
+}
+
 .native-detail-box {
   margin-top: 12px;
 }

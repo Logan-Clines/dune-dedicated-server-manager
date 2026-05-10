@@ -1,7 +1,7 @@
 import { Map, PackagePlus, RadioTower, RefreshCw } from "lucide-react";
 import { InfoRow } from "../components/primitives";
-import type { AppConfig, ManagerApiInstallResult, ManagerApiStatus, TelemetryEnvelope } from "../types";
-import { expectedManagerApiVersion } from "../utils";
+import type { AppConfig, ManagerApiInstallResult, ManagerApiStatus, ManagerSelfStatus, TelemetryEnvelope } from "../types";
+import { expectedManagerApiVersion, formatDuration } from "../utils";
 
 type ManagerApiPanelProps = {
   config: AppConfig;
@@ -9,6 +9,7 @@ type ManagerApiPanelProps = {
   managerReadiness: string;
   managerTelemetryState: string;
   managerStatus: ManagerApiStatus | null;
+  managerSelf: ManagerSelfStatus | null;
   managerTelemetry: TelemetryEnvelope | null;
   managerInstall: ManagerApiInstallResult | null;
   managerError: string;
@@ -23,6 +24,7 @@ export function ManagerApiPanel({
   managerReadiness,
   managerTelemetryState,
   managerStatus,
+  managerSelf,
   managerTelemetry,
   managerInstall,
   managerError,
@@ -56,6 +58,9 @@ export function ManagerApiPanel({
         <InfoRow label="API" value={managerReadiness} />
         <InfoRow label="Tool version" value={managerStatus?.apiVersion ?? "Unknown"} />
         <InfoRow label="Tool freshness" value={toolFreshness} />
+        <InfoRow label="Service" value={managerSelf?.serviceName ?? "Unknown"} />
+        <InfoRow label="PID" value={managerSelf?.pid} />
+        <InfoRow label="Uptime" value={managerSelf ? formatDuration(managerSelf.uptimeSeconds) : "Unknown"} />
         <InfoRow label="Telemetry socket" value={managerTelemetryState} />
         <InfoRow label="Namespace" value={managerStatus?.namespace} />
         <InfoRow label="Director bridge" value={managerStatus?.directorConfigured ? "Configured" : "Unavailable"} />
@@ -78,6 +83,28 @@ export function ManagerApiPanel({
           }
         />
       </section>
+      {managerSelf && (
+        <section className="native-detail-box manager-self-box">
+          <div className="mini-title">
+            <strong>Installed Service</strong>
+            <span>{managerSelf.currentExe || managerSelf.binaryPath}</span>
+          </div>
+          <div className="compact-list">
+            <div>
+              <strong>Binary</strong>
+              <span className="mono">{managerSelf.binaryPath}</span>
+            </div>
+            <div>
+              <strong>Environment</strong>
+              <span className="mono">{managerSelf.envPath}</span>
+            </div>
+            <div>
+              <strong>Log</strong>
+              <span className="mono">{managerSelf.logPath}</span>
+            </div>
+          </div>
+        </section>
+      )}
       {managerInstall && (
         <p className="success-line">
           Installed {managerInstall.deployment} in {managerInstall.namespace}

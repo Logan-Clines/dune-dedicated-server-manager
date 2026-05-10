@@ -32,6 +32,7 @@ import type {
   ManagerApiInstallResult,
   ManagerApiStatus,
   ManagerLogResponse,
+  ManagerSelfStatus,
   ManagerWorkloads,
   MapOverrideDraft,
   TransferDraft,
@@ -50,6 +51,7 @@ import {
   numberAt,
   valueAt
 } from "./utils";
+import { isBattleGroupSettled, lifecycleStatusText } from "./domain/lifecycle";
 
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(defaultConfig);
@@ -67,6 +69,7 @@ export default function App() {
   const [configSaved, setConfigSaved] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [managerInstall, setManagerInstall] = useState<ManagerApiInstallResult | null>(null);
+  const [managerSelf, setManagerSelf] = useState<ManagerSelfStatus | null>(null);
   const [directorPlayers, setDirectorPlayers] = useState<DirectorPlayerSummary | null>(null);
   const [directorPlayerLists, setDirectorPlayerLists] = useState<DirectorPlayerLists | null>(null);
   const [directorMaps, setDirectorMaps] = useState<DirectorMapSummary[]>([]);
@@ -185,6 +188,7 @@ export default function App() {
     if (nextVmState !== "running") {
       setGuest(null);
       setManagerStatus(null);
+      setManagerSelf(null);
       setManagerTelemetry(null);
       setBattleGroups([]);
       setBattleGroupDetail(null);
@@ -221,6 +225,10 @@ export default function App() {
       ? await capture("Manager API status", () => managerRequest<ManagerApiStatus>("/api/status"))
       : null;
     setManagerStatus(nextManagerStatus);
+    const nextManagerSelf = managerApiConfigured
+      ? await capture("Manager API self", () => managerRequest<ManagerSelfStatus>("/api/manager/self"))
+      : null;
+    setManagerSelf(nextManagerSelf);
 
     let nextBattleGroups = managerApiConfigured
       ? await capture("Manager BattleGroups", () => managerRequest<BattleGroupSummary[]>("/api/battlegroups"))
@@ -586,21 +594,6 @@ export default function App() {
     );
   }
 
-  function isBattleGroupSettled(detail: BattleGroupDetail, target: "running" | "stopped") {
-    const phase = detail.phase.toLowerCase();
-    if (target === "stopped") {
-      return detail.stop || ["stopped", "suspended"].includes(phase);
-    }
-    return !detail.stop && ["healthy", "running", "ready"].includes(phase);
-  }
-
-  function lifecycleStatusText(action: BattleGroupLifecycle["action"], detail: BattleGroupDetail) {
-    const phase = detail.phase || "Unknown";
-    if (action === "restart") return `Restarting, current phase ${phase}`;
-    if (action === "start") return `Starting, current phase ${phase}`;
-    return `Stopping, current phase ${phase}`;
-  }
-
   async function exportLiveConfig() {
     if (!selectedBattleGroup) return;
     setBusy(true);
@@ -835,6 +828,7 @@ export default function App() {
             managerReadiness={managerReadiness}
             managerTelemetryState={managerTelemetryState}
             managerStatus={managerStatus}
+            managerSelf={managerSelf}
             managerTelemetry={managerTelemetry}
             managerInstall={managerInstall}
             managerError={managerError}

@@ -58,6 +58,22 @@ export type ManagerApiStatus = {
   services: number;
 };
 
+export type ManagerSelfStatus = {
+  apiVersion: string;
+  startedUnixMs: number;
+  uptimeSeconds: number;
+  pid: number;
+  namespace: string;
+  port: number;
+  authEnabled: boolean;
+  directorConfigured: boolean;
+  currentExe: string;
+  serviceName: string;
+  binaryPath: string;
+  envPath: string;
+  logPath: string;
+};
+
 export type ManagerLogResponse = {
   pod: string;
   container?: string | null;

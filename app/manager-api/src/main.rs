@@ -93,11 +93,14 @@ async fn main() -> Result<()> {
         token,
         director_base_url,
         http: reqwest::Client::new(),
+        started_unix_ms: now_unix_ms(),
+        port,
     });
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/api/status", get(status))
+        .route("/api/manager/self", get(manager_self))
         .route("/api/battlegroups", get(battlegroups))
         .route(
             "/api/battlegroups/:namespace/:name",
@@ -216,6 +219,30 @@ async fn status(
         battlegroups,
         pods,
         services,
+    }))
+}
+
+async fn manager_self(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> ApiResponse<ManagerSelfResponse> {
+    authorize(&state, &headers, None)?;
+    Ok(Json(ManagerSelfResponse {
+        api_version: MANAGER_API_VERSION,
+        started_unix_ms: state.started_unix_ms,
+        uptime_seconds: ((now_unix_ms()).saturating_sub(state.started_unix_ms) / 1000) as u64,
+        pid: std::process::id(),
+        namespace: state.namespace.clone(),
+        port: state.port,
+        auth_enabled: state.token.is_some(),
+        director_configured: resolve_director_base_url(&state).await.is_ok(),
+        current_exe: env::current_exe()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        service_name: "dune-manager-api",
+        binary_path: "/opt/dune-manager/dune-manager-api",
+        env_path: "/etc/dune-manager-api.env",
+        log_path: "/var/log/dune-manager-api.log",
     }))
 }
 
