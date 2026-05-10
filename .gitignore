@@ -43,6 +43,7 @@ app/default-config.json
 app/steamcmd/
 app/dune-server/
 app/vm/
+app/vm-*/
 vm/
 *.pem
 *.key

@@ -17,6 +17,7 @@ use crate::{
         CommandResult, GuestBootstrapRequest, SetupCommandResult, SetupPersistedState, SetupState,
         SteamCmdDetection, VmDestinationStatus, VmImportOptions,
     },
+    operation_log::{classify_command_output, OperationLogEvent, StreamLogCapture},
     security::redact_text,
     shell::{ps_single_quoted, run_powershell},
     ssh::{prepare_key, run_ssh},
@@ -31,7 +32,8 @@ const WORLD_REGIONS: &[&str] = &["Europe Test", "North America Test"];
 #[serde(rename_all = "camelCase")]
 struct SetupOutputEvent {
     stage: String,
-    line: String,
+    level: crate::operation_log::LogLevel,
+    message: String,
 }
 
 #[tauri::command]
@@ -125,14 +127,16 @@ if ($vm) {{
     state.suggested_steamcmd_install_dir = suggested_steamcmd_install_dir()
         .to_string_lossy()
         .to_string();
-    state.suggested_server_install_dir = suggested_server_install_dir()
-        .to_string_lossy()
-        .to_string();
+    state.suggested_server_install_dir =
+        suggested_server_install_dir().to_string_lossy().to_string();
     Ok(state)
 }
 
 #[tauri::command]
-pub async fn install_steamcmd(app: AppHandle, install_dir: String) -> CommandResult<SteamCmdDetection> {
+pub async fn install_steamcmd(
+    app: AppHandle,
+    install_dir: String,
+) -> CommandResult<SteamCmdDetection> {
     run_setup_task(move || install_steamcmd_sync(app, install_dir)).await
 }
 
@@ -205,20 +209,21 @@ fn install_server_app_sync(
         "validate".to_string(),
         "+quit".to_string(),
     ];
-    let (mut stdout, exit_code) = run_program_streaming(&app, "server-app", steamcmd_path, &args)?;
-    let installed = stdout.contains(&format!("Success! App '{SERVER_APP_ID}' fully installed."));
+    let (mut capture, exit_code) = run_program_streaming(&app, "server-app", steamcmd_path, &args)?;
+    let installed = capture
+        .raw
+        .contains(&format!("Success! App '{SERVER_APP_ID}' fully installed."));
     if exit_code != 0 && installed {
         let line = format!(
             "SteamCMD returned exit code {exit_code} after reporting success; treating install as successful."
         );
         emit_setup_line(&app, "server-app", &line);
-        stdout.push_str(&line);
-        stdout.push('\n');
+        capture.push_controlled("server-app", &line);
     }
     if exit_code != 0 && !installed {
         return Err(failure(format!(
             "SteamCMD failed with exit code {exit_code}\n{}",
-            redact_text(&stdout)
+            redact_text(&capture.controlled)
         )));
     }
 
@@ -230,7 +235,7 @@ fn install_server_app_sync(
     Ok(stage_ok(
         "server-app",
         "Server app install/update completed",
-        stdout,
+        capture.controlled,
     ))
 }
 
@@ -307,8 +312,7 @@ $switches = @(Get-VMSwitch -ErrorAction SilentlyContinue | ForEach-Object {{
 "#,
         install = ps_single_quoted(&install),
         vm_name = ps_single_quoted(&config.vm_name),
-        suggested_destination =
-            ps_single_quoted(&suggested_vm_destination_dir().to_string_lossy())
+        suggested_destination = ps_single_quoted(&suggested_vm_destination_dir().to_string_lossy())
     );
     parse_json(&run_powershell(&script)?, "VM import options")
 }
@@ -446,7 +450,11 @@ Start-VM -Name $vmName -ErrorAction Stop
     }
     let _ = write_app_config(&app, config)?;
     mark_stage(&app, "vm-import", None)?;
-    Ok(stage_ok("vm-import", "VM imported and started", stdout))
+    Ok(stage_ok(
+        "vm-import",
+        "VM imported and started",
+        "VM imported, configured, and started.".to_string(),
+    ))
 }
 
 #[tauri::command]
@@ -529,7 +537,9 @@ fn run_guest_bootstrap_stage_sync(
     .trim()
     .to_string();
     if world_unique_name.is_empty() {
-        return Err(failure("Guest bootstrap did not produce a battlegroup name"));
+        return Err(failure(
+            "Guest bootstrap did not produce a battlegroup name",
+        ));
     }
 
     all_output.push_str(&run_guest_phase(
@@ -557,7 +567,7 @@ fn run_guest_bootstrap_stage_sync(
     Ok(stage_ok(
         "guest-bootstrap",
         "Guest bootstrap completed",
-        all_output,
+        "Guest bootstrap completed.".to_string(),
     ))
 }
 
@@ -566,7 +576,9 @@ fn validate_guest_bootstrap_request(request: &GuestBootstrapRequest) -> CommandR
         || request.ip.trim().is_empty()
         || request.player_ip.trim().is_empty()
     {
-        return Err(failure("Install path, VM IP, and player-facing IP are required"));
+        return Err(failure(
+            "Install path, VM IP, and player-facing IP are required",
+        ));
     }
     let world_name = request.world_name.trim();
     if world_name.is_empty() || world_name.chars().count() > 50 {
@@ -583,7 +595,9 @@ fn validate_guest_bootstrap_request(request: &GuestBootstrapRequest) -> CommandR
     }
     let profile = non_empty(&request.profile_id, DEFAULT_BOOTSTRAP_PROFILE_ID);
     if profile != DEFAULT_BOOTSTRAP_PROFILE_ID {
-        return Err(failure("Only the vendor-default bootstrap profile is available right now"));
+        return Err(failure(
+            "Only the vendor-default bootstrap profile is available right now",
+        ));
     }
     Ok(())
 }
@@ -710,7 +724,10 @@ fn guest_static_network_script(request: &GuestBootstrapRequest) -> String {
     let mut script = String::from("set -euo pipefail\n");
     script.push_str(&shell_value("STATIC_IP", request.static_ip.trim()));
     script.push_str(&shell_value("STATIC_CIDR", &cidr));
-    script.push_str(&shell_value("STATIC_GATEWAY", request.static_gateway.trim()));
+    script.push_str(&shell_value(
+        "STATIC_GATEWAY",
+        request.static_gateway.trim(),
+    ));
     script.push_str(&shell_value("STATIC_DNS", &dns));
     script.push_str(
         r#"
@@ -1150,8 +1167,12 @@ pub fn save_setup_state(
 pub fn clear_setup_state(app: AppHandle) -> CommandResult<SetupPersistedState> {
     let path = setup_state_path(&app)?;
     if path.exists() {
-        fs::remove_file(&path)
-            .map_err(|err| failure(format!("Failed to remove setup state {}: {err}", path.display())))?;
+        fs::remove_file(&path).map_err(|err| {
+            failure(format!(
+                "Failed to remove setup state {}: {err}",
+                path.display()
+            ))
+        })?;
     }
     Ok(SetupPersistedState::default())
 }
@@ -1178,8 +1199,12 @@ fn read_setup_state(app: &AppHandle) -> CommandResult<SetupPersistedState> {
     if !path.exists() {
         return Ok(SetupPersistedState::default());
     }
-    let text = fs::read_to_string(&path)
-        .map_err(|err| failure(format!("Failed to read setup state {}: {err}", path.display())))?;
+    let text = fs::read_to_string(&path).map_err(|err| {
+        failure(format!(
+            "Failed to read setup state {}: {err}",
+            path.display()
+        ))
+    })?;
     parse_json(&text, "setup state")
 }
 
@@ -1191,8 +1216,12 @@ fn write_setup_state(app: &AppHandle, state: &SetupPersistedState) -> CommandRes
     }
     let text = serde_json::to_string_pretty(state)
         .map_err(|err| failure(format!("Failed to serialize setup state: {err}")))?;
-    fs::write(&path, text)
-        .map_err(|err| failure(format!("Failed to write setup state {}: {err}", path.display())))?;
+    fs::write(&path, text).map_err(|err| {
+        failure(format!(
+            "Failed to write setup state {}: {err}",
+            path.display()
+        ))
+    })?;
     Ok(())
 }
 
@@ -1249,13 +1278,13 @@ fn run_ssh_script_streaming(
             .map_err(|err| failure(format!("Failed to send SSH script: {err}")))?;
     }
 
-    let output = Arc::new(Mutex::new(String::new()));
+    let capture = Arc::new(Mutex::new(StreamLogCapture::default()));
     let mut readers = Vec::new();
     if let Some(stdout) = child.stdout.take() {
         readers.push(spawn_stream_reader(
             app.clone(),
             stage.to_string(),
-            output.clone(),
+            capture.clone(),
             stdout,
         ));
     }
@@ -1263,7 +1292,7 @@ fn run_ssh_script_streaming(
         readers.push(spawn_stream_reader(
             app.clone(),
             stage.to_string(),
-            output.clone(),
+            capture.clone(),
             stderr,
         ));
     }
@@ -1274,7 +1303,7 @@ fn run_ssh_script_streaming(
     for reader in readers {
         let _ = reader.join();
     }
-    let output = output
+    let capture = capture
         .lock()
         .map(|value| value.clone())
         .unwrap_or_default();
@@ -1283,23 +1312,28 @@ fn run_ssh_script_streaming(
         return Err(failure(format!(
             "SSH bootstrap phase failed with exit code {}\n{}",
             status.code().unwrap_or(-1),
-            redact_text(&output)
+            redact_text(&capture.controlled)
         )));
     }
 
-    Ok(output)
+    Ok(capture.controlled)
 }
 
 fn emit_setup_line(app: &AppHandle, stage: &str, line: &str) {
-    let line = redact_text(line).trim_end().to_string();
+    emit_setup_event(app, OperationLogEvent::info(stage, line));
+}
+
+fn emit_setup_event(app: &AppHandle, event: OperationLogEvent) {
+    let line = redact_text(&event.message).trim_end().to_string();
     if line.is_empty() {
         return;
     }
     let _ = app.emit(
         "setup-output",
         SetupOutputEvent {
-            stage: stage.to_string(),
-            line,
+            stage: event.stage,
+            level: event.level,
+            message: line,
         },
     );
 }
@@ -1309,7 +1343,7 @@ fn run_program_streaming(
     stage: &str,
     program: &str,
     args: &[String],
-) -> CommandResult<(String, i32)> {
+) -> CommandResult<(StreamLogCapture, i32)> {
     let mut child = Command::new(program)
         .args(args)
         .stdout(Stdio::piped())
@@ -1317,14 +1351,14 @@ fn run_program_streaming(
         .spawn()
         .map_err(|err| failure(format!("Failed to run {program}: {err}")))?;
 
-    let output = Arc::new(Mutex::new(String::new()));
+    let capture = Arc::new(Mutex::new(StreamLogCapture::default()));
     let mut readers = Vec::new();
 
     if let Some(stdout) = child.stdout.take() {
         readers.push(spawn_stream_reader(
             app.clone(),
             stage.to_string(),
-            output.clone(),
+            capture.clone(),
             stdout,
         ));
     }
@@ -1332,7 +1366,7 @@ fn run_program_streaming(
         readers.push(spawn_stream_reader(
             app.clone(),
             stage.to_string(),
-            output.clone(),
+            capture.clone(),
             stderr,
         ));
     }
@@ -1345,17 +1379,17 @@ fn run_program_streaming(
         let _ = reader.join();
     }
 
-    let output = output
+    let capture = capture
         .lock()
         .map(|value| value.clone())
         .unwrap_or_default();
-    Ok((output, status.code().unwrap_or(-1)))
+    Ok((capture, status.code().unwrap_or(-1)))
 }
 
 fn spawn_stream_reader<R>(
     app: AppHandle,
     stage: String,
-    output: Arc<Mutex<String>>,
+    capture: Arc<Mutex<StreamLogCapture>>,
     stream: R,
 ) -> thread::JoinHandle<()>
 where
@@ -1364,10 +1398,12 @@ where
     thread::spawn(move || {
         let reader = BufReader::new(stream);
         for line in reader.lines().map_while(Result::ok) {
-            emit_setup_line(&app, &stage, &line);
-            if let Ok(mut output) = output.lock() {
-                output.push_str(&redact_text(&line));
-                output.push('\n');
+            if let Ok(mut capture) = capture.lock() {
+                capture.push_raw(&line);
+                if let Some(event) = classify_command_output(&stage, &line) {
+                    capture.push_event(event.clone());
+                    emit_setup_event(&app, event);
+                }
             }
         }
     })

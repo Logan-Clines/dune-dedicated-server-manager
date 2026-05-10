@@ -1,9 +1,12 @@
 use tauri::AppHandle;
 
 mod battlegroups;
+pub mod cli;
 mod config_store;
 mod errors;
 mod models;
+pub mod operation_log;
+pub mod orchestration;
 mod security;
 mod setup;
 mod shell;
@@ -241,7 +244,6 @@ sudo kubectl get ns --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/nu
     }
     Ok(namespace)
 }
-
 
 #[tauri::command]
 fn install_manager_api(

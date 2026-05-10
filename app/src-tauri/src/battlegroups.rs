@@ -1,5 +1,8 @@
 use serde_json::Value;
-use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    fs,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tauri::AppHandle;
 
 use crate::{
