@@ -211,10 +211,10 @@ function asError(error: unknown): CommandFailure {
 
 function statusTone(value?: string | boolean | null) {
   const text = String(value ?? "").toLowerCase();
-  if (value === true || ["running", "ready", "operating normally", "active"].includes(text)) {
+  if (value === true || ["running", "ready", "connected", "online", "operating normally", "active"].includes(text)) {
     return "good";
   }
-  if (value === false || ["stopped", "suspended", "error", "failed"].includes(text)) {
+  if (value === false || ["stopped", "suspended", "disabled", "offline", "error", "failed"].includes(text)) {
     return "bad";
   }
   return "warn";
@@ -281,7 +281,9 @@ export default function App() {
     ["running", "ready", "starting"].includes(selectedBattleGroup?.phase.toLowerCase() ?? "");
   const canUseGuest = Boolean(vmIsRunning && guest?.connected && guest?.sudo && guest?.kubectl);
   const managerApiConfigured = config.managerApiUrl.trim().length > 0;
-  const canUseManager = managerApiConfigured && managerSocketState === "connected";
+  const managerReadiness = managerStatus ? "Ready" : managerApiConfigured ? "Offline" : "Disabled";
+  const managerTelemetryState = managerApiConfigured ? managerSocketState : "disabled";
+  const canUseManager = managerApiConfigured && Boolean(managerStatus);
   const managerInstallNamespace = config.managerApiNamespace.trim() || selectedBattleGroup?.namespace || "";
   const canInstallManagerApi = Boolean(canUseGuest && managerInstallNamespace && config.managerApiBinaryPath.trim());
 
@@ -639,7 +641,7 @@ export default function App() {
           <div>
             <RadioTower size={18} />
             <span>Manager API</span>
-            <StatusPill value={managerSocketState === "connected"} />
+            <StatusPill value={managerReadiness} />
           </div>
         </section>
 
@@ -808,7 +810,8 @@ export default function App() {
             <InfoRow label="URL" value={config.managerApiUrl || "Not configured"} />
             <InfoRow label="Install namespace" value={managerInstallNamespace || "Not configured"} />
             <InfoRow label="Binary" value={config.managerApiBinaryPath || "Not configured"} />
-            <InfoRow label="Socket" value={managerApiConfigured ? managerSocketState : "Disabled"} />
+            <InfoRow label="API" value={managerReadiness} />
+            <InfoRow label="Telemetry socket" value={managerTelemetryState} />
             <InfoRow label="Namespace" value={managerStatus?.namespace} />
             <InfoRow label="Director bridge" value={managerStatus?.directorConfigured ? "Configured" : "Unavailable"} />
             <InfoRow
