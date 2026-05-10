@@ -355,9 +355,18 @@ export default function App() {
       void invoke<AppConfig>("save_app_config", { config: updatedConfig });
     }
 
-    const nextBattleGroups = managerApiConfigured
+    let nextBattleGroups = managerApiConfigured
       ? await capture("Manager BattleGroups", () => managerRequest<BattleGroupSummary[]>("/api/battlegroups"))
       : null;
+    if (!nextBattleGroups && nextGuest?.kubectl && nextGuest.sudo) {
+      nextBattleGroups = await capture("Initial BattleGroup discovery", () =>
+        invoke<BattleGroupSummary[]>("get_battlegroups", {
+          installPath: config.installPath,
+          ip: nextGuest.ip ?? ip,
+          sshUser: config.sshUser
+        })
+      );
+    }
     if (nextBattleGroups) {
       setBattleGroups(nextBattleGroups);
       const nextSelected = nextBattleGroups.some((group) => group.namespace === selectedNamespace)
@@ -464,6 +473,15 @@ export default function App() {
     setBusy(false);
   }
 
+  async function detectEnvironment() {
+    setBusy(true);
+    const detected = await capture("Detect environment", () => invoke<AppConfig>("detect_app_config"));
+    if (detected) {
+      setConfig(detected);
+    }
+    setBusy(false);
+  }
+
   async function installManagerApi() {
     const namespace = managerInstallNamespace;
     const token = config.managerApiToken || generateToken();
@@ -497,7 +515,7 @@ export default function App() {
 
   useEffect(() => {
     void (async () => {
-      const loaded = await capture("Load config", () => invoke<AppConfig>("get_app_config"));
+      const loaded = await capture("Detect environment", () => invoke<AppConfig>("detect_app_config"));
       if (loaded) {
         setConfig(loaded);
       }
@@ -646,105 +664,26 @@ export default function App() {
         </section>
 
         <section className="settings-band">
-          <label>
-            Server install path
-            <input
-              value={config.installPath}
-              onChange={(event) => setConfig((current) => ({ ...current, installPath: event.target.value }))}
-              onBlur={() => void saveConfig()}
-            />
-          </label>
-          <div className="settings-grid">
-            <label>
-              VM name
-              <input
-                value={config.vmName}
-                onChange={(event) => setConfig((current) => ({ ...current, vmName: event.target.value }))}
-                onBlur={() => void saveConfig()}
-              />
-            </label>
-            <label>
-              VM IP
-              <input
-                value={config.vmIp}
-                onChange={(event) => setConfig((current) => ({ ...current, vmIp: event.target.value }))}
-                onBlur={() => void saveConfig()}
-              />
-            </label>
-            <label>
-              SSH user
-              <input
-                value={config.sshUser}
-                onChange={(event) => setConfig((current) => ({ ...current, sshUser: event.target.value }))}
-                onBlur={() => void saveConfig()}
-              />
-            </label>
-            <label>
-              SSH path
-              <input
-                value={config.sshPath}
-                onChange={(event) => setConfig((current) => ({ ...current, sshPath: event.target.value }))}
-                onBlur={() => void saveConfig()}
-              />
-            </label>
-            <label>
-              Manager API URL
-              <input
-                placeholder="http://127.0.0.1:8787"
-                value={config.managerApiUrl}
-                onChange={(event) => setConfig((current) => ({ ...current, managerApiUrl: event.target.value }))}
-                onBlur={() => void saveConfig()}
-              />
-            </label>
-            <label>
-              Manager namespace
-              <input
-                placeholder={selectedBattleGroup?.namespace || "namespace"}
-                value={config.managerApiNamespace}
-                onChange={(event) =>
-                  setConfig((current) => ({ ...current, managerApiNamespace: event.target.value }))
-                }
-                onBlur={() => void saveConfig()}
-              />
-            </label>
-            <label>
-              Manager binary
-              <input
-                placeholder="path to Linux dune-manager-api binary"
-                value={config.managerApiBinaryPath}
-                onChange={(event) =>
-                  setConfig((current) => ({ ...current, managerApiBinaryPath: event.target.value }))
-                }
-                onBlur={() => void saveConfig()}
-              />
-            </label>
-            <label>
-              Director internal URL
-              <input
-                placeholder="http://director-service:11717"
-                value={config.managerApiDirectorUrl}
-                onChange={(event) =>
-                  setConfig((current) => ({ ...current, managerApiDirectorUrl: event.target.value }))
-                }
-                onBlur={() => void saveConfig()}
-              />
-            </label>
-            <label>
-              Manager API token
-              <input
-                type="password"
-                value={config.managerApiToken}
-                onChange={(event) => setConfig((current) => ({ ...current, managerApiToken: event.target.value }))}
-                onBlur={() => void saveConfig()}
-              />
-            </label>
-          </div>
-          <div className="settings-actions">
-            <button onClick={() => void saveConfig()} disabled={busy}>
-              Save config
+          <div className="panel-title">
+            <h2>Detected Environment</h2>
+            <button onClick={detectEnvironment} disabled={busy}>
+              <RefreshCw size={16} />
+              Detect
             </button>
-            {configSaved && <span>Saved to app config.json</span>}
           </div>
+          <div className="detected-grid">
+            <InfoRow label="Server install path" value={config.installPath || "Not found"} />
+            <InfoRow label="VM name" value={config.vmName || "Not found"} />
+            <InfoRow label="VM IP" value={config.vmIp || vm?.ipAddresses?.[0] || "Not found"} />
+            <InfoRow label="SSH user" value={config.sshUser || "Not found"} />
+            <InfoRow label="SSH path" value={config.sshPath || "Not found"} />
+            <InfoRow label="Manager API URL" value={config.managerApiUrl || "Not installed"} />
+            <InfoRow label="Manager namespace" value={managerInstallNamespace || "Not detected"} />
+            <InfoRow label="Manager binary" value={config.managerApiBinaryPath || "Not found"} />
+            <InfoRow label="Director internal URL" value={config.managerApiDirectorUrl || "Not detected"} />
+            <InfoRow label="Manager token" value={config.managerApiToken ? "Stored" : "Will be generated on install"} />
+          </div>
+          {configSaved && <p className="success-line">Saved to app config.json</p>}
         </section>
 
         {errors.length > 0 && (

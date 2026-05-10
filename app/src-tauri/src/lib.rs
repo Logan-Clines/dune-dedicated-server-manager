@@ -156,6 +156,15 @@ struct ManagerApiInstallResult {
     url: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct DetectedConfig {
+    install_path: Option<String>,
+    vm_name: Option<String>,
+    vm_ip: Option<String>,
+    ssh_path: Option<String>,
+}
+
 fn failure(message: impl Into<String>) -> CommandFailure {
     CommandFailure {
         message: message.into(),
@@ -299,6 +308,14 @@ fn ps_single_quoted(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
+fn first_non_empty(current: String, detected: Option<String>) -> String {
+    if current.trim().is_empty() {
+        detected.unwrap_or_default().trim().to_string()
+    } else {
+        current
+    }
+}
+
 fn default_key_path(install_path: &str) -> PathBuf {
     Path::new(install_path)
         .join("internal-scripts")
@@ -395,6 +412,89 @@ fn read_app_config(app: &AppHandle) -> CommandResult<AppConfig> {
     read_config_file(&path)
 }
 
+fn detect_host_config() -> DetectedConfig {
+    let script = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$steamInstallPaths = @()
+$steamInstallPaths += (Get-ItemProperty -Path 'HKCU:\Software\Valve\Steam').SteamPath
+$steamInstallPaths += (Get-ItemProperty -Path 'HKLM:\Software\WOW6432Node\Valve\Steam').InstallPath
+$steamInstallPaths += (Get-ItemProperty -Path 'HKLM:\Software\Valve\Steam').InstallPath
+$libraryRoots = @()
+foreach ($steamPath in $steamInstallPaths | Where-Object { $_ }) {
+  $libraryRoots += $steamPath
+  $libraryFile = Join-Path $steamPath 'steamapps\libraryfolders.vdf'
+  if (Test-Path $libraryFile) {
+    Get-Content $libraryFile | ForEach-Object {
+      if ($_ -match '"path"\s+"([^"]+)"') {
+        $libraryRoots += ($Matches[1] -replace '\\\\', '\')
+      }
+    }
+  }
+}
+$installPath = $null
+foreach ($root in $libraryRoots | Select-Object -Unique) {
+  $candidate = Join-Path $root 'steamapps\common\Dune Awakening Playtest Server'
+  if (Test-Path $candidate) {
+    $installPath = (Resolve-Path $candidate).Path
+    break
+  }
+}
+$ssh = (Get-Command ssh.exe).Source
+$vmName = $null
+$vmIp = $null
+if (Get-Command Get-VM) {
+  $vm = Get-VM | Where-Object { $_.Name -match 'dune|awakening' } | Select-Object -First 1
+  if ($vm) {
+    $vmName = $vm.Name
+    $ips = @((Get-VMNetworkAdapter -VMName $vm.Name).IPAddresses | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' })
+    $vmIp = $ips | Select-Object -First 1
+  }
+}
+[pscustomobject]@{
+  installPath = $installPath
+  vmName = $vmName
+  vmIp = $vmIp
+  sshPath = $ssh
+} | ConvertTo-Json -Compress
+"#;
+    run_powershell(script)
+        .ok()
+        .and_then(|text| parse_json::<DetectedConfig>(&text, "detected host config").ok())
+        .unwrap_or_default()
+}
+
+fn detect_manager_binary_path() -> Option<String> {
+    let relative = Path::new("app")
+        .join("manager-api")
+        .join("target")
+        .join("x86_64-unknown-linux-musl")
+        .join("release")
+        .join("dune-manager-api");
+
+    let mut candidates = Vec::new();
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join(&relative));
+        candidates.push(
+            current_dir
+                .join("manager-api")
+                .join("target")
+                .join("x86_64-unknown-linux-musl")
+                .join("release")
+                .join("dune-manager-api"),
+        );
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        for ancestor in exe.ancestors() {
+            candidates.push(ancestor.join(&relative));
+        }
+    }
+
+    candidates
+        .into_iter()
+        .find(|path| path.exists())
+        .map(|path| path.to_string_lossy().to_string())
+}
+
 fn required_config_value(
     value: Option<String>,
     fallback: &str,
@@ -442,6 +542,23 @@ fn get_app_config(app: AppHandle) -> CommandResult<AppConfig> {
 
 #[tauri::command]
 fn save_app_config(app: AppHandle, config: AppConfig) -> CommandResult<AppConfig> {
+    write_app_config(&app, config)
+}
+
+#[tauri::command]
+fn detect_app_config(app: AppHandle) -> CommandResult<AppConfig> {
+    let mut config = read_app_config(&app)?;
+    let detected = detect_host_config();
+    config.install_path = first_non_empty(config.install_path, detected.install_path);
+    config.vm_name = first_non_empty(config.vm_name, detected.vm_name);
+    config.vm_ip = first_non_empty(config.vm_ip, detected.vm_ip);
+    config.ssh_path = first_non_empty(config.ssh_path, detected.ssh_path);
+    config.ssh_user = first_non_empty(config.ssh_user, Some("dune".to_string()));
+    config.manager_api_binary_path =
+        first_non_empty(config.manager_api_binary_path, detect_manager_binary_path());
+    if config.manager_api_url.is_empty() && !config.vm_ip.is_empty() {
+        config.manager_api_url = format!("http://{}:8787", config.vm_ip);
+    }
     write_app_config(&app, config)
 }
 
@@ -1247,6 +1364,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_config,
             save_app_config,
+            detect_app_config,
             get_host_status,
             get_vm_status,
             start_vm,
