@@ -14,6 +14,7 @@ use crate::{
         StrictPowerShellHyperV, StructuredBattlegroupOps, StructuredKubectl, VecOperationSink,
         VmProvider, DEFAULT_VM_DISK_BYTES,
     },
+    toolchain::{ManagedTool, Toolchain},
 };
 
 pub fn run_cli_from_env() -> i32 {
@@ -64,6 +65,44 @@ fn run_cli(args: Vec<String>) -> CommandResult<Value> {
             )
         }
         ["host", "adapters"] => to_json(StrictPowerShellHyperV::new().active_physical_adapters()?),
+        ["tools", "status"] => {
+            let toolchain = toolchain(&args)?;
+            if let Some(tool) = args.optional("--tool") {
+                to_json(toolchain.status(ManagedTool::parse(&tool)?))
+            } else {
+                to_json(toolchain.status_all())
+            }
+        }
+        ["tools", "path"] => {
+            let tool = ManagedTool::parse(&args.required("--tool")?)?;
+            let status = toolchain(&args)?.status(tool);
+            Ok(json!({
+                "ok": true,
+                "tool": tool,
+                "installed": status.installed,
+                "path": status.executable,
+            }))
+        }
+        ["tools", "install"] => {
+            let tool_name = args.required("--tool")?;
+            let toolchain = toolchain(&args)?;
+            let force = args.has_flag("--force");
+            let source_url = args.optional("--source-url");
+            if tool_name.eq_ignore_ascii_case("all") {
+                if source_url.is_some() {
+                    return Err(failure(
+                        "--source-url can only be used when installing one tool",
+                    ));
+                }
+                let mut results = Vec::new();
+                for tool in [ManagedTool::SteamCmd, ManagedTool::OpenSsh] {
+                    results.push(toolchain.install(tool, force, None)?);
+                }
+                to_json(results)
+            } else {
+                to_json(toolchain.install(ManagedTool::parse(&tool_name)?, force, source_url)?)
+            }
+        }
         ["vm", "get"] => {
             let name = args.required("--name")?;
             to_json(StrictPowerShellHyperV::new().get_vm(&name)?)
@@ -253,6 +292,14 @@ fn bg_ops(args: &CliArgs) -> CommandResult<StructuredBattlegroupOps<OpenSshRunne
     Ok(StructuredBattlegroupOps::new(ssh_runner(args)?))
 }
 
+fn toolchain(args: &CliArgs) -> CommandResult<Toolchain> {
+    if let Some(root) = args.optional("--tools-root") {
+        Ok(Toolchain::new(root))
+    } else {
+        Toolchain::from_default_root()
+    }
+}
+
 fn battlegroup_ref(args: &CliArgs) -> CommandResult<BattlegroupRef> {
     Ok(BattlegroupRef {
         namespace: args.required("--namespace")?,
@@ -389,6 +436,9 @@ fn usage() -> Vec<&'static str> {
         "dune-manager-cli host readiness",
         "dune-manager-cli host drives [--min-gb 100]",
         "dune-manager-cli host adapters",
+        "dune-manager-cli tools status [--tool steamcmd|openssh] [--tools-root PATH]",
+        "dune-manager-cli tools install --tool steamcmd|openssh|all [--tools-root PATH] [--force] [--source-url URL]",
+        "dune-manager-cli tools path --tool steamcmd|openssh [--tools-root PATH]",
         "dune-manager-cli vm get --name NAME",
         "dune-manager-cli vm start --name NAME",
         "dune-manager-cli vm stop --name NAME",

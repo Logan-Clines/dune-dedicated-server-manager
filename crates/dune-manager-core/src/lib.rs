@@ -5,4 +5,5 @@ pub mod operation_log;
 pub mod orchestration;
 pub mod security;
 pub mod shell;
+pub mod toolchain;
 pub mod validation;

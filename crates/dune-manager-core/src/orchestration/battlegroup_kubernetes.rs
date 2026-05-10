@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::{
     errors::{failure, parse_json},
@@ -93,36 +93,26 @@ where
     pub fn patch_region(&self, battlegroup: &BattlegroupRef, region: &str) -> CommandResult<()> {
         battlegroup.validate()?;
         validate_region(region)?;
-        let mut script = String::from("set -euo pipefail\n");
-        script.push_str(&shell_value("NS", &battlegroup.namespace));
-        script.push_str(&shell_value("BG", &battlegroup.name));
-        script.push_str(&shell_value("REGION", region));
-        script.push_str(
-            r#"
-sudo kubectl get battlegroup "$BG" -n "$NS" -o json |
-jq --arg region "$REGION" '
-  def patch_region:
-    if type == "object" then
-      with_entries(
-        if .key == "dataCenter" and (.value | type == "string") then
-          .value = $region
-        else
-          .
-        end
-      )
-      | if .name? == "BATTLEGROUP_REGION_NAME" and has("value") then .value = $region else . end
-      | with_entries(.value |= patch_region)
-    elif type == "array" then
-      map(if type == "string" and startswith("-FarmRegion=") then "-FarmRegion=" + $region else patch_region end)
-    else
-      .
-    end;
-  patch_region
-' |
-sudo kubectl replace -f - -o json
-"#,
+        let command = format!(
+            "sudo kubectl get battlegroup {} -n {} -o json",
+            sh_single_quoted(&battlegroup.name),
+            sh_single_quoted(&battlegroup.namespace)
         );
-        let output = self.runner.run_script(&script)?;
+        let battlegroup_json = self
+            .runner
+            .run_json(&command, "battlegroup region source")?;
+        let operations = region_patch_operations(&battlegroup_json, region)?;
+        let patch_command = format!(
+            "sudo kubectl patch battlegroup {} -n {} --type=json -p {} -o json",
+            sh_single_quoted(&battlegroup.name),
+            sh_single_quoted(&battlegroup.namespace),
+            sh_single_quoted(&serde_json::to_string(&operations).map_err(|err| {
+                failure(format!(
+                    "Failed to serialize region patch operations: {err}"
+                ))
+            })?),
+        );
+        let output = self.runner.run(&patch_command)?;
         let value: Value = parse_json(&output, "patched battlegroup")?;
         let patched_name = value["metadata"]["name"].as_str().unwrap_or_default();
         if patched_name != battlegroup.name {
@@ -275,9 +265,79 @@ fn sh_single_quoted(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-fn shell_value(name: &str, value: &str) -> String {
-    let delimiter = format!("__DUNE_MANAGER_{name}__");
-    format!("{name}=$(cat <<'{delimiter}'\n{value}\n{delimiter}\n)\n")
+fn region_patch_operations(value: &Value, region: &str) -> CommandResult<Vec<Value>> {
+    let mut operations = Vec::new();
+    collect_region_patch_operations(value, &mut Vec::new(), region, &mut operations);
+    if operations.is_empty() {
+        return Err(failure("No battlegroup region fields were found to patch"));
+    }
+    Ok(operations)
+}
+
+fn collect_region_patch_operations(
+    value: &Value,
+    path: &mut Vec<String>,
+    region: &str,
+    operations: &mut Vec<Value>,
+) {
+    match value {
+        Value::Object(map) => {
+            if map
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| name == "BATTLEGROUP_REGION_NAME")
+                && map.get("value").is_some()
+            {
+                let mut value_path = path.clone();
+                value_path.push("value".to_string());
+                operations.push(replace_operation(&value_path, json!(region)));
+            }
+
+            for (key, child) in map {
+                path.push(key.clone());
+                if key == "dataCenter" && child.is_string() {
+                    operations.push(replace_operation(path, json!(region)));
+                }
+                collect_region_patch_operations(child, path, region, operations);
+                path.pop();
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                path.push(index.to_string());
+                if child
+                    .as_str()
+                    .is_some_and(|text| text.starts_with("-FarmRegion="))
+                {
+                    operations.push(replace_operation(
+                        path,
+                        json!(format!("-FarmRegion={region}")),
+                    ));
+                }
+                collect_region_patch_operations(child, path, region, operations);
+                path.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn replace_operation(path: &[String], value: Value) -> Value {
+    json!({
+        "op": "replace",
+        "path": json_pointer(path),
+        "value": value,
+    })
+}
+
+fn json_pointer(path: &[String]) -> String {
+    format!(
+        "/{}",
+        path.iter()
+            .map(|item| item.replace('~', "~0").replace('/', "~1"))
+            .collect::<Vec<_>>()
+            .join("/")
+    )
 }
 
 #[cfg(test)]
@@ -341,8 +401,18 @@ mod tests {
     }
 
     #[test]
-    fn region_patch_uses_structured_jq_transform_not_sed() {
-        let remote = MockRemote::with_outputs([r#"{"metadata":{"name":"sh-host-abcdef"}}"#]);
+    fn region_patch_uses_rust_built_json_patch_without_jq() {
+        let remote = MockRemote::with_outputs([
+            r#"{
+              "metadata":{"name":"sh-host-abcdef"},
+              "spec":{
+                "dataCenter":"Old",
+                "args":["-FarmRegion=Old"],
+                "env":[{"name":"BATTLEGROUP_REGION_NAME","value":"Old"}]
+              }
+            }"#,
+            r#"{"metadata":{"name":"sh-host-abcdef"}}"#,
+        ]);
         let commands = remote.commands.clone();
         let ops = StructuredBattlegroupOps::new(remote);
         ops.patch_region(
@@ -353,13 +423,17 @@ mod tests {
             "Europe Test",
         )
         .unwrap();
-        let script = commands.borrow().first().cloned().unwrap();
-        assert!(script.contains("jq --arg region"));
-        assert!(script.contains("BATTLEGROUP_REGION_NAME"));
-        assert!(script.contains("dataCenter"));
-        assert!(script.contains("startsWith") || script.contains("startswith"));
-        assert!(!script.contains(" sed "));
-        assert!(script.contains("kubectl replace -f - -o json"));
+        let commands = commands.borrow();
+        assert!(commands[0].contains("kubectl get battlegroup"));
+        assert!(commands[1].contains("kubectl patch battlegroup"));
+        assert!(commands[1].contains("--type=json"));
+        assert!(
+            commands[1].contains("BATTLEGROUP_REGION_NAME") || commands[1].contains("/env/0/value")
+        );
+        assert!(commands[1].contains("dataCenter"));
+        assert!(commands[1].contains("-FarmRegion=Europe Test"));
+        assert!(!commands.join("\n").contains("jq"));
+        assert!(!commands.join("\n").contains(" sed "));
     }
 
     #[test]

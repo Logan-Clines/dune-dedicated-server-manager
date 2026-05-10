@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use serde_json::{json, Value};
 
 use crate::{
     errors::failure,
@@ -115,12 +116,34 @@ where
     ) -> CommandResult<()> {
         validate_kube_arg(namespace, "namespace")?;
         validate_kube_arg(battlegroup_name, "battlegroup name")?;
-        let mut script = String::new();
-        script.push_str("set -euo pipefail\n");
-        script.push_str(&shell_value("NS", namespace));
-        script.push_str(&shell_value("BATTLEGROUP_NAME", battlegroup_name));
-        script.push_str(PATCH_BATTLEGROUP_IMAGES_SCRIPT);
-        self.run_phase(&script)?;
+        let new_version = self
+            .run_phase(READ_BATTLEGROUP_VERSION_SCRIPT)?
+            .trim()
+            .to_string();
+        if new_version.is_empty() {
+            return Err(failure("Battlegroup image version file was empty"));
+        }
+
+        let command = format!(
+            "sudo kubectl get battlegroup {} -n {} -o json",
+            sh_single_quoted(battlegroup_name),
+            sh_single_quoted(namespace),
+        );
+        let battlegroup_json = self
+            .runner
+            .run_json(&command, "battlegroup image patch source")?;
+        let operations = battlegroup_image_patch_operations(&battlegroup_json, &new_version)?;
+        let patch_command = format!(
+            "sudo kubectl patch battlegroup {} -n {} --type=json -p {} -o json",
+            sh_single_quoted(battlegroup_name),
+            sh_single_quoted(namespace),
+            sh_single_quoted(&serde_json::to_string(&operations).map_err(|err| {
+                failure(format!(
+                    "Failed to serialize battlegroup image patch: {err}"
+                ))
+            })?),
+        );
+        self.runner.run(&patch_command)?;
         Ok(())
     }
 
@@ -425,28 +448,14 @@ load_image_from_file "images/battlegroup/server-db-utils.tar"
 load_image_from_file "images/battlegroup/server.tar"
 "#;
 
-const PATCH_BATTLEGROUP_IMAGES_SCRIPT: &str = r#"
+const READ_BATTLEGROUP_VERSION_SCRIPT: &str = r#"
 DOWNLOAD_PATH=/home/dune/.dune/download
 version_file="$DOWNLOAD_PATH/images/battlegroup/version.txt"
 if [ ! -f "$version_file" ]; then
   echo "No battlegroup version file found at $version_file" >&2
   exit 1
 fi
-new_version=$(cat "$version_file")
-IMAGE_PATTERN='(?<prefix>.*/seabass-server[^:]*:)(?<tag>[0-9]+-0-[a-zA-Z0-9_-]+)'
-patch_operations=$(sudo kubectl get battlegroup "$BATTLEGROUP_NAME" -n "$NS" -o json | jq --arg image_pattern "$IMAGE_PATTERN" --arg new_revision "$new_version" '
-  [
-    paths as $p |
-    select(getpath($p) | type == "string" and test($image_pattern)) |
-    select($p[-1] == "image") |
-    {
-      op: "replace",
-      path: ("/" + ($p | map(tostring) | join("/"))),
-      value: ((getpath($p) | capture($image_pattern).prefix) + $new_revision)
-    }
-  ]
-')
-sudo kubectl patch battlegroup "$BATTLEGROUP_NAME" -n "$NS" --type=json -p "$patch_operations" >&2
+cat "$version_file"
 "#;
 
 const APPLY_DEFAULT_SETTINGS_SCRIPT: &str = r#"
@@ -478,6 +487,87 @@ done
 fn shell_value(name: &str, value: &str) -> String {
     let delimiter = format!("__DUNE_MANAGER_{name}__");
     format!("{name}=$(cat <<'{delimiter}'\n{value}\n{delimiter}\n)\n")
+}
+
+fn sh_single_quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn battlegroup_image_patch_operations(
+    value: &Value,
+    new_version: &str,
+) -> CommandResult<Vec<Value>> {
+    let mut operations = Vec::new();
+    collect_battlegroup_image_patch_operations(
+        value,
+        &mut Vec::new(),
+        new_version,
+        &mut operations,
+    );
+    if operations.is_empty() {
+        return Err(failure("No battlegroup server images were found to patch"));
+    }
+    Ok(operations)
+}
+
+fn collect_battlegroup_image_patch_operations(
+    value: &Value,
+    path: &mut Vec<String>,
+    new_version: &str,
+    operations: &mut Vec<Value>,
+) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                path.push(key.clone());
+                if key == "image" {
+                    if let Some(updated) = child
+                        .as_str()
+                        .and_then(|image| revised_seabass_server_image(image, new_version))
+                    {
+                        operations.push(replace_operation(path, json!(updated)));
+                    }
+                }
+                collect_battlegroup_image_patch_operations(child, path, new_version, operations);
+                path.pop();
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                path.push(index.to_string());
+                collect_battlegroup_image_patch_operations(child, path, new_version, operations);
+                path.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn revised_seabass_server_image(image: &str, new_version: &str) -> Option<String> {
+    let file = image.rsplit('/').next().unwrap_or(image);
+    if !file.starts_with("seabass-server") {
+        return None;
+    }
+    let (prefix, _) = image.rsplit_once(':')?;
+    Some(format!("{prefix}:{new_version}"))
+}
+
+fn replace_operation(path: &[String], value: Value) -> Value {
+    json!({
+        "op": "replace",
+        "path": json_pointer(path),
+        "value": value,
+    })
+}
+
+fn json_pointer(path: &[String]) -> String {
+    format!(
+        "/{}",
+        path.iter()
+            .map(|item| item.replace('~', "~0").replace('/', "~1"))
+            .collect::<Vec<_>>()
+            .join("/")
+    )
 }
 
 #[cfg(test)]
@@ -554,6 +644,38 @@ mod tests {
     fn guest_download_uses_validating_app_update() {
         let script = download_script();
         assert!(script.contains("+app_update 3104830 validate"));
+    }
+
+    #[test]
+    fn battlegroup_image_patch_uses_rust_built_json_patch_without_jq() {
+        let remote = MockRemote::with_outputs([
+            "1952287-0-shipping",
+            r#"{
+              "metadata":{"name":"sh-host-abcdef"},
+              "spec":{
+                "serverSets":[
+                  {"image":"registry.funcom.com/funcom/self-hosting/seabass-server:old"},
+                  {"image":"registry.funcom.com/funcom/self-hosting/other:old"}
+                ],
+                "nested":{"image":"registry.funcom.com/funcom/self-hosting/seabass-server-gateway:old"}
+              }
+            }"#,
+            r#"{"metadata":{"name":"sh-host-abcdef"}}"#,
+        ]);
+        let scripts = remote.scripts.clone();
+        let provider = SshGuestBootstrapProvider::new(remote);
+        provider
+            .patch_battlegroup_images("funcom-seabass-sh-host-abcdef", "sh-host-abcdef")
+            .unwrap();
+
+        let scripts = scripts.borrow();
+        assert!(scripts[0].contains("version.txt"));
+        assert!(scripts[1].contains("kubectl get battlegroup"));
+        assert!(scripts[2].contains("kubectl patch battlegroup"));
+        assert!(scripts[2].contains("--type=json"));
+        assert!(scripts[2].contains("1952287-0-shipping"));
+        assert!(scripts[2].contains("seabass-server-gateway"));
+        assert!(!scripts.join("\n").contains("jq"));
     }
 
     #[test]
