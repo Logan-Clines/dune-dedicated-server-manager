@@ -1,10 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   Activity,
+  CheckCircle2,
   Database,
   Download,
   ExternalLink,
   HardDrive,
+  MinusCircle,
   PackagePlus,
   RadioTower,
   Play,
@@ -15,6 +17,7 @@ import {
   SlidersHorizontal,
   Square,
   Terminal,
+  XCircle,
   Wifi
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -223,6 +226,17 @@ function statusTone(value?: string | boolean | null) {
 function StatusPill({ value }: { value?: string | boolean | null }) {
   const label = typeof value === "boolean" ? (value ? "Yes" : "No") : value || "Unknown";
   return <span className={`pill ${statusTone(value)}`}>{label}</span>;
+}
+
+function StatusLamp({ value, label }: { value?: string | boolean | null; label: string }) {
+  const tone = statusTone(value);
+  const Icon = tone === "good" ? CheckCircle2 : tone === "bad" ? XCircle : MinusCircle;
+  const text = typeof value === "boolean" ? (value ? "Ready" : "Unavailable") : value || "Unknown";
+  return (
+    <span className={`status-lamp ${tone}`} title={`${label}: ${text}`} aria-label={`${label}: ${text}`}>
+      <Icon size={18} />
+    </span>
+  );
 }
 
 function InfoRow({ label, value }: { label: string; value?: string | number | null }) {
@@ -634,32 +648,32 @@ export default function App() {
           <div>
             <ShieldCheck size={18} />
             <span>Admin</span>
-            <StatusPill value={host?.isElevated ?? false} />
+            <StatusLamp label="Admin" value={host?.isElevated ?? false} />
           </div>
           <div>
             <HardDrive size={18} />
             <span>VM</span>
-            <StatusPill value={vm?.state} />
+            <StatusLamp label="VM" value={vm?.state} />
           </div>
           <div>
             <Terminal size={18} />
             <span>SSH</span>
-            <StatusPill value={guest?.connected ?? false} />
+            <StatusLamp label="SSH" value={guest?.connected ?? false} />
           </div>
           <div>
             <Database size={18} />
             <span>k3s</span>
-            <StatusPill value={guest?.kubectl ?? false} />
+            <StatusLamp label="k3s" value={guest?.kubectl ?? false} />
           </div>
           <div>
             <Activity size={18} />
             <span>BattleGroup</span>
-            <StatusPill value={selectedBattleGroup?.phase} />
+            <StatusLamp label="BattleGroup" value={selectedBattleGroup?.phase} />
           </div>
           <div>
             <RadioTower size={18} />
             <span>Manager API</span>
-            <StatusPill value={managerReadiness} />
+            <StatusLamp label="Manager API" value={managerReadiness} />
           </div>
         </section>
 
