@@ -18,7 +18,8 @@ import {
   Square,
   Terminal,
   XCircle,
-  Wifi
+  Wifi,
+  type LucideIcon
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -186,6 +187,8 @@ type ManagerApiInstallResult = {
   url: string;
 };
 
+type ViewKey = "overview" | "host" | "manager" | "battlegroups" | "workloads" | "config" | "logs";
+
 const defaultConfig: AppConfig = {
   installPath: "",
   vmName: "",
@@ -293,6 +296,7 @@ export default function App() {
   );
   const [managerError, setManagerError] = useState("");
   const [managerInstall, setManagerInstall] = useState<ManagerApiInstallResult | null>(null);
+  const [activeView, setActiveView] = useState<ViewKey>("overview");
 
   const selectedBattleGroup = useMemo(
     () => battleGroups.find((group) => group.namespace === selectedNamespace) ?? battleGroups[0],
@@ -315,6 +319,31 @@ export default function App() {
   const managerToolsInstalled = canUseManager;
   const managerInstallNamespace = config.managerApiNamespace.trim() || selectedBattleGroup?.namespace || "";
   const canInstallManagerApi = Boolean(canUseGuest && managerInstallNamespace && config.managerApiBinaryPath.trim());
+  const managerRequiredViews = ["battlegroups", "workloads", "config", "logs"];
+  const activeViewRequiresManager = managerRequiredViews.includes(activeView);
+  const viewLabels: Record<ViewKey, string> = {
+    overview: "Overview",
+    host: "Host & VM",
+    manager: "Manager API",
+    battlegroups: "BattleGroups",
+    workloads: "Pods & Services",
+    config: "Live Config",
+    logs: "Logs"
+  };
+  const pageTitle = activeView === "overview" ? selectedBattleGroup?.title || "Dune Awakening" : viewLabels[activeView];
+  const pageSubtitle =
+    activeView === "overview"
+      ? selectedBattleGroup?.name || "No battlegroup detected"
+      : selectedBattleGroup?.title || selectedBattleGroup?.name || "No battlegroup selected";
+  const navItems: { key: ViewKey; label: string; icon: LucideIcon; disabled?: boolean }[] = [
+    { key: "overview", label: "Overview", icon: Server },
+    { key: "host", label: "Host & VM", icon: HardDrive },
+    { key: "manager", label: "Manager API", icon: RadioTower },
+    { key: "battlegroups", label: "BattleGroups", icon: Activity, disabled: !managerToolsInstalled },
+    { key: "workloads", label: "Pods & Services", icon: Database, disabled: !managerToolsInstalled },
+    { key: "config", label: "Config", icon: SlidersHorizontal, disabled: !managerToolsInstalled },
+    { key: "logs", label: "Logs", icon: Terminal, disabled: !managerToolsInstalled }
+  ];
 
   async function capture<T>(label: string, fn: () => Promise<T>): Promise<T | null> {
     try {
@@ -623,6 +652,12 @@ export default function App() {
     };
   }, [configLoaded, config.managerApiUrl, config.managerApiToken]);
 
+  useEffect(() => {
+    if (activeViewRequiresManager && !managerToolsInstalled) {
+      setActiveView("manager");
+    }
+  }, [activeViewRequiresManager, managerToolsInstalled]);
+
   const pods = workloads?.pods.items ?? [];
   const services = workloads?.services.items ?? [];
 
@@ -637,21 +672,28 @@ export default function App() {
           </div>
         </div>
         <nav>
-          <a className="active">Overview</a>
-          <a>Host & VM</a>
-          <a className={managerToolsInstalled ? "" : "disabled"}>BattleGroups</a>
-          <a>Manager API</a>
-          <a className={managerToolsInstalled ? "" : "disabled"}>Pods & Services</a>
-          <a className={managerToolsInstalled ? "" : "disabled"}>Config</a>
-          <a className={managerToolsInstalled ? "" : "disabled"}>Logs</a>
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.key}
+                className={`${activeView === item.key ? "active" : ""} ${item.disabled ? "disabled" : ""}`}
+                disabled={item.disabled}
+                onClick={() => setActiveView(item.key)}
+              >
+                <Icon size={16} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
         </nav>
       </aside>
 
       <section className="content">
         <header className="topbar">
           <div>
-            <h1>{selectedBattleGroup?.title || "Dune Awakening"}</h1>
-            <p>{selectedBattleGroup?.name || "No battlegroup detected"}</p>
+            <h1>{pageTitle}</h1>
+            <p>{pageSubtitle}</p>
           </div>
           <button className="primary" onClick={refresh} disabled={busy}>
             <RefreshCw size={17} />
@@ -692,28 +734,30 @@ export default function App() {
           </div>
         </section>
 
-        <section className="settings-band">
-          <div className="panel-title">
-            <h2>Detected Environment</h2>
-            <button onClick={detectEnvironment} disabled={busy}>
-              <RefreshCw size={16} />
-              Detect
-            </button>
-          </div>
-          <div className="detected-grid">
-            <InfoRow label="Server install path" value={config.installPath || "Not found"} />
-            <InfoRow label="VM name" value={config.vmName || "Not found"} />
-            <InfoRow label="VM IP" value={config.vmIp || vm?.ipAddresses?.[0] || "Not found"} />
-            <InfoRow label="SSH user" value={config.sshUser || "Not found"} />
-            <InfoRow label="SSH path" value={config.sshPath || "Not found"} />
-            <InfoRow label="Manager API URL" value={config.managerApiUrl || "Not installed"} />
-            <InfoRow label="Manager namespace" value={managerInstallNamespace || "Not detected"} />
-            <InfoRow label="Manager binary" value={config.managerApiBinaryPath || "Not found"} />
-            <InfoRow label="Director internal URL" value={config.managerApiDirectorUrl || "Not detected"} />
-            <InfoRow label="Manager token" value={config.managerApiToken ? "Stored" : "Will be generated on install"} />
-          </div>
-          {configSaved && <p className="success-line">Saved to app config.json</p>}
-        </section>
+        {(activeView === "overview" || activeView === "config") && (
+          <section className="settings-band">
+            <div className="panel-title">
+              <h2>Detected Environment</h2>
+              <button onClick={detectEnvironment} disabled={busy}>
+                <RefreshCw size={16} />
+                Detect
+              </button>
+            </div>
+            <div className="detected-grid">
+              <InfoRow label="Server install path" value={config.installPath || "Not found"} />
+              <InfoRow label="VM name" value={config.vmName || "Not found"} />
+              <InfoRow label="VM IP" value={config.vmIp || vm?.ipAddresses?.[0] || "Not found"} />
+              <InfoRow label="SSH user" value={config.sshUser || "Not found"} />
+              <InfoRow label="SSH path" value={config.sshPath || "Not found"} />
+              <InfoRow label="Manager API URL" value={config.managerApiUrl || "Not installed"} />
+              <InfoRow label="Manager namespace" value={managerInstallNamespace || "Not detected"} />
+              <InfoRow label="Manager binary" value={config.managerApiBinaryPath || "Not found"} />
+              <InfoRow label="Director internal URL" value={config.managerApiDirectorUrl || "Not detected"} />
+              <InfoRow label="Manager token" value={config.managerApiToken ? "Stored" : "Will be generated on install"} />
+            </div>
+            {configSaved && <p className="success-line">Saved to app config.json</p>}
+          </section>
+        )}
 
         {errors.length > 0 && (
           <section className="error-list">
@@ -726,90 +770,94 @@ export default function App() {
           </section>
         )}
 
-        <section className="grid two">
-          <article className="panel">
+        {(activeView === "overview" || activeView === "host") && (
+          <section className="grid two">
+            <article className="panel">
+              <div className="panel-title">
+                <h2>Host & VM</h2>
+                <div className="button-row">
+                  <button onClick={startVm} disabled={busy || !canControlVm || vmIsRunning || vmIsChanging}>
+                    <Play size={16} />
+                    Start VM
+                  </button>
+                  <button onClick={stopVm} disabled={busy || !canControlVm || !vmIsRunning || vmIsChanging}>
+                    <Square size={16} />
+                    Stop VM
+                  </button>
+                </div>
+              </div>
+              <InfoRow label="Hyper-V" value={host?.hypervAvailable ? "Available" : "Unavailable"} />
+              <InfoRow label="vmms service" value={host?.vmmsStatus} />
+              <InfoRow label="VM status" value={vm?.status} />
+              <InfoRow label="Memory" value={vm ? formatBytes(vm.memoryAssignedBytes) : null} />
+              <InfoRow label="Uptime" value={vm?.uptime} />
+              <InfoRow label="VM path" value={vm?.path} />
+            </article>
+
+            <article className="panel">
+              <div className="panel-title">
+                <h2>Guest Connection</h2>
+                <Wifi size={19} />
+              </div>
+              <InfoRow label="IP" value={guest?.ip ?? vm?.ipAddresses?.[0]} />
+              <InfoRow label="SSH user" value={guest?.sshUser} />
+              <InfoRow label="Hostname" value={guest?.hostname} />
+              <InfoRow label="Kernel" value={guest?.kernel} />
+              <InfoRow label="Passwordless sudo" value={guest?.sudo ? "Ready" : "Unavailable"} />
+              <InfoRow label="kubectl" value={guest?.kubectl ? "Ready" : "Unavailable"} />
+            </article>
+          </section>
+        )}
+
+        {(activeView === "overview" || activeView === "manager") && (
+          <section className="panel">
             <div className="panel-title">
-              <h2>Host & VM</h2>
+              <h2>Manager API</h2>
               <div className="button-row">
-                <button onClick={startVm} disabled={busy || !canControlVm || vmIsRunning || vmIsChanging}>
-                  <Play size={16} />
-                  Start VM
+                <button onClick={installManagerApi} disabled={busy || !canInstallManagerApi}>
+                  <PackagePlus size={16} />
+                  Install Tool
                 </button>
-                <button onClick={stopVm} disabled={busy || !canControlVm || !vmIsRunning || vmIsChanging}>
-                  <Square size={16} />
-                  Stop VM
-                </button>
+                <RadioTower size={19} />
               </div>
             </div>
-            <InfoRow label="Hyper-V" value={host?.hypervAvailable ? "Available" : "Unavailable"} />
-            <InfoRow label="vmms service" value={host?.vmmsStatus} />
-            <InfoRow label="VM status" value={vm?.status} />
-            <InfoRow label="Memory" value={vm ? formatBytes(vm.memoryAssignedBytes) : null} />
-            <InfoRow label="Uptime" value={vm?.uptime} />
-            <InfoRow label="VM path" value={vm?.path} />
-          </article>
-
-          <article className="panel">
-            <div className="panel-title">
-              <h2>Guest Connection</h2>
-              <Wifi size={19} />
-            </div>
-            <InfoRow label="IP" value={guest?.ip ?? vm?.ipAddresses?.[0]} />
-            <InfoRow label="SSH user" value={guest?.sshUser} />
-            <InfoRow label="Hostname" value={guest?.hostname} />
-            <InfoRow label="Kernel" value={guest?.kernel} />
-            <InfoRow label="Passwordless sudo" value={guest?.sudo ? "Ready" : "Unavailable"} />
-            <InfoRow label="kubectl" value={guest?.kubectl ? "Ready" : "Unavailable"} />
-          </article>
-        </section>
-
-        <section className="panel">
-          <div className="panel-title">
-            <h2>Manager API</h2>
-            <div className="button-row">
-              <button onClick={installManagerApi} disabled={busy || !canInstallManagerApi}>
-                <PackagePlus size={16} />
-                Install Tool
-              </button>
-              <RadioTower size={19} />
-            </div>
-          </div>
-          <section className="config-summary">
-            <InfoRow label="URL" value={config.managerApiUrl || "Not configured"} />
-            <InfoRow label="Install namespace" value={managerInstallNamespace || "Not configured"} />
-            <InfoRow label="Binary" value={config.managerApiBinaryPath || "Not configured"} />
-            <InfoRow label="API" value={managerReadiness} />
-            <InfoRow label="Telemetry socket" value={managerTelemetryState} />
-            <InfoRow label="Namespace" value={managerStatus?.namespace} />
-            <InfoRow label="Director bridge" value={managerStatus?.directorConfigured ? "Configured" : "Unavailable"} />
-            <InfoRow
-              label="Telemetry"
-              value={
-                managerTelemetry?.payload
-                  ? `${managerTelemetry.payload.pods?.length ?? 0} pods, ${
-                      managerTelemetry.payload.services?.length ?? 0
-                    } services`
-                  : "No events yet"
-              }
-            />
-            <InfoRow
-              label="Snapshot counts"
-              value={
-                managerStatus
-                  ? `${managerStatus.battlegroups} battlegroups, ${managerStatus.pods} pods, ${managerStatus.services} services`
-                  : "Unknown"
-              }
-            />
+            <section className="config-summary">
+              <InfoRow label="URL" value={config.managerApiUrl || "Not configured"} />
+              <InfoRow label="Install namespace" value={managerInstallNamespace || "Not configured"} />
+              <InfoRow label="Binary" value={config.managerApiBinaryPath || "Not configured"} />
+              <InfoRow label="API" value={managerReadiness} />
+              <InfoRow label="Telemetry socket" value={managerTelemetryState} />
+              <InfoRow label="Namespace" value={managerStatus?.namespace} />
+              <InfoRow label="Director bridge" value={managerStatus?.directorConfigured ? "Configured" : "Unavailable"} />
+              <InfoRow
+                label="Telemetry"
+                value={
+                  managerTelemetry?.payload
+                    ? `${managerTelemetry.payload.pods?.length ?? 0} pods, ${
+                        managerTelemetry.payload.services?.length ?? 0
+                      } services`
+                    : "No events yet"
+                }
+              />
+              <InfoRow
+                label="Snapshot counts"
+                value={
+                  managerStatus
+                    ? `${managerStatus.battlegroups} battlegroups, ${managerStatus.pods} pods, ${managerStatus.services} services`
+                    : "Unknown"
+                }
+              />
+            </section>
+            {managerInstall && (
+              <p className="success-line">
+                Installed {managerInstall.deployment} in {managerInstall.namespace}
+              </p>
+            )}
+            {managerError && <p className="subtle-line">{managerError}</p>}
           </section>
-          {managerInstall && (
-            <p className="success-line">
-              Installed {managerInstall.deployment} in {managerInstall.namespace}
-            </p>
-          )}
-          {managerError && <p className="subtle-line">{managerError}</p>}
-        </section>
+        )}
 
-        {!managerToolsInstalled ? (
+        {!managerToolsInstalled && (activeView === "overview" || activeView === "manager" || activeViewRequiresManager) && (
           <section className="tool-required panel">
             <div>
               <RadioTower size={24} />
@@ -824,8 +872,9 @@ export default function App() {
               Install Tool
             </button>
           </section>
-        ) : (
-          <>
+        )}
+
+        {managerToolsInstalled && (activeView === "overview" || activeView === "battlegroups") && (
             <section className="panel">
               <div className="panel-title">
                 <h2>BattleGroups</h2>
@@ -913,7 +962,9 @@ export default function App() {
               )}
               {snapshotPath && <p className="success-line">Snapshot exported to {snapshotPath}</p>}
             </section>
+        )}
 
+        {managerToolsInstalled && activeView === "config" && (
             <section className="panel">
               <div className="panel-title">
                 <h2>Live Config</h2>
@@ -971,7 +1022,9 @@ export default function App() {
                 </>
               )}
             </section>
+        )}
 
+        {managerToolsInstalled && (activeView === "overview" || activeView === "workloads") && (
             <section className="grid two">
               <article className="panel">
                 <div className="panel-title">
@@ -1023,7 +1076,16 @@ export default function App() {
                 )}
               </article>
             </section>
-          </>
+        )}
+
+        {managerToolsInstalled && activeView === "logs" && (
+          <section className="panel">
+            <div className="panel-title">
+              <h2>Logs</h2>
+              <Terminal size={19} />
+            </div>
+            <EmptyState text="Log export and streaming will live here once the manager log endpoints are wired." />
+          </section>
         )}
       </section>
     </main>

@@ -228,47 +228,73 @@ nav {
   margin-top: 16px;
 }
 
-nav a {
+nav button {
   position: relative;
+  justify-content: flex-start;
+  gap: 10px;
   min-height: 38px;
   padding: 10px 12px 10px 16px;
   border: 1px solid transparent;
   border-radius: 6px;
   color: var(--muted);
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
 }
 
-nav a::before {
+nav button::before {
   position: absolute;
   top: 12px;
+  right: auto;
   bottom: 12px;
   left: 7px;
+  inset-inline-start: 7px;
+  inset-block: 12px;
+  height: auto;
   width: 2px;
   content: "";
+  border-radius: 0;
   background: transparent;
 }
 
-nav a.active,
-nav a:hover {
+nav button svg {
+  flex: 0 0 auto;
+}
+
+nav button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+nav button.active,
+nav button:hover:not(:disabled) {
   color: #fff8e9;
   border-color: rgba(217, 168, 87, 0.2);
   background:
     linear-gradient(90deg, rgba(217, 168, 87, 0.16), rgba(94, 216, 200, 0.06)),
     rgba(255, 255, 255, 0.025);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.34);
+  transform: none;
 }
 
-nav a.disabled {
+nav button.disabled {
   color: rgba(184, 176, 157, 0.38);
   border-color: transparent;
   background: transparent;
   cursor: not-allowed;
+  opacity: 1;
 }
 
-nav a.disabled::before {
+nav button.disabled::before {
   background: rgba(184, 176, 157, 0.16);
 }
 
-nav a.active::before,
-nav a:hover::before {
+nav button.active::before,
+nav button:hover:not(:disabled)::before {
   background: linear-gradient(180deg, var(--sand-hot), var(--teal));
 }
 
