@@ -312,6 +312,7 @@ export default function App() {
   const managerReadiness = managerStatus ? "Ready" : managerApiConfigured ? "Offline" : "Disabled";
   const managerTelemetryState = managerApiConfigured ? managerSocketState : "disabled";
   const canUseManager = managerApiConfigured && Boolean(managerStatus);
+  const managerToolsInstalled = canUseManager;
   const managerInstallNamespace = config.managerApiNamespace.trim() || selectedBattleGroup?.namespace || "";
   const canInstallManagerApi = Boolean(canUseGuest && managerInstallNamespace && config.managerApiBinaryPath.trim());
 
@@ -638,11 +639,11 @@ export default function App() {
         <nav>
           <a className="active">Overview</a>
           <a>Host & VM</a>
-          <a>BattleGroups</a>
+          <a className={managerToolsInstalled ? "" : "disabled"}>BattleGroups</a>
           <a>Manager API</a>
-          <a>Pods & Services</a>
-          <a>Config</a>
-          <a>Logs</a>
+          <a className={managerToolsInstalled ? "" : "disabled"}>Pods & Services</a>
+          <a className={managerToolsInstalled ? "" : "disabled"}>Config</a>
+          <a className={managerToolsInstalled ? "" : "disabled"}>Logs</a>
         </nav>
       </aside>
 
@@ -808,198 +809,222 @@ export default function App() {
           {managerError && <p className="subtle-line">{managerError}</p>}
         </section>
 
-        <section className="panel">
-          <div className="panel-title">
-            <h2>BattleGroups</h2>
-            <div className="button-row">
-              <button
-                onClick={() => setBattleGroupRunning(true)}
-                disabled={busy || !selectedBattleGroup || !canUseManager || !battleGroupIsStopped}
-              >
-                <Play size={16} />
-                Start
-              </button>
-              <button
-                onClick={() => setBattleGroupRunning(false)}
-                disabled={busy || !selectedBattleGroup || !canUseManager || battleGroupIsStopped}
-              >
-                <Square size={16} />
-                Stop
-              </button>
-              <button
-                onClick={restartBattleGroup}
-                disabled={busy || !selectedBattleGroup || !canUseManager || !battleGroupIsRunning}
-              >
-                <RotateCcw size={16} />
-                Restart
-              </button>
-              <button onClick={exportLiveConfig} disabled={busy || !selectedBattleGroup || !canUseManager}>
-                <Download size={16} />
-                Export
-              </button>
+        {!managerToolsInstalled ? (
+          <section className="tool-required panel">
+            <div>
+              <RadioTower size={24} />
+              <h2>Manager tools must be installed</h2>
             </div>
-          </div>
-          {battleGroups.length === 0 ? (
-            <EmptyState text="No BattleGroups were found." />
-          ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Title</th>
-                    <th>Phase</th>
-                    <th>Server Sets</th>
-                    <th>Image</th>
-                    <th>Services</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {battleGroups.map((group) => (
-                    <tr
-                      key={group.namespace}
-                      className={group.namespace === selectedBattleGroup?.namespace ? "selected" : ""}
-                      onClick={() => {
-                        setSelectedNamespace(group.namespace);
-                        void loadBattleGroupDetail(group);
-                        void loadWorkloads(group.namespace);
-                      }}
-                    >
-                      <td>
-                        <strong>{group.title || group.name}</strong>
-                        <span>{group.namespace}</span>
-                      </td>
-                      <td>
-                        <StatusPill value={group.phase} />
-                      </td>
-                      <td>{group.serverSets}</td>
-                      <td className="mono">{group.serverImage}</td>
-                      <td>
-                        <div className="link-row">
-                          {group.fileBrowserUrl && (
-                            <a href={group.fileBrowserUrl} target="_blank" rel="noreferrer">
-                              Files <ExternalLink size={14} />
-                            </a>
-                          )}
-                          {group.directorUrl && (
-                            <a href={group.directorUrl} target="_blank" rel="noreferrer">
-                              Director <ExternalLink size={14} />
-                            </a>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {snapshotPath && <p className="success-line">Snapshot exported to {snapshotPath}</p>}
-        </section>
-
-        <section className="panel">
-          <div className="panel-title">
-            <h2>Live Config</h2>
-            <SlidersHorizontal size={19} />
-          </div>
-          {!battleGroupDetail ? (
-            <EmptyState text="No live BattleGroup detail loaded." />
-          ) : (
-            <>
-              <section className="config-summary">
-                <InfoRow label="Title" value={battleGroupDetail.title} />
-                <InfoRow label="Database" value={battleGroupDetail.databasePhase || "Unknown"} />
-                <InfoRow label="Server group" value={battleGroupDetail.serverGroupPhase || battleGroupDetail.phase} />
-                <InfoRow label="Gateway" value={battleGroupDetail.gatewayPhase || "Unknown"} />
-                <InfoRow label="Director" value={battleGroupDetail.directorPhase || "Unknown"} />
-                <InfoRow label="Stop flag" value={battleGroupDetail.stop ? "true" : "false"} />
-              </section>
-              <div className="image-list">
-                <strong>Images</strong>
-                {[battleGroupDetail.serverImage, ...battleGroupDetail.utilityImages].filter(Boolean).map((image) => (
-                  <span className="mono chip" key={image}>
-                    {image}
-                  </span>
-                ))}
+            <p>
+              BattleGroups, live config, pods, services, logs, and server actions are hidden until the Manager API is
+              installed and reachable.
+            </p>
+            <button onClick={installManagerApi} disabled={busy || !canInstallManagerApi}>
+              <PackagePlus size={16} />
+              Install Tool
+            </button>
+          </section>
+        ) : (
+          <>
+            <section className="panel">
+              <div className="panel-title">
+                <h2>BattleGroups</h2>
+                <div className="button-row">
+                  <button
+                    onClick={() => setBattleGroupRunning(true)}
+                    disabled={busy || !selectedBattleGroup || !canUseManager || !battleGroupIsStopped}
+                  >
+                    <Play size={16} />
+                    Start
+                  </button>
+                  <button
+                    onClick={() => setBattleGroupRunning(false)}
+                    disabled={busy || !selectedBattleGroup || !canUseManager || battleGroupIsStopped}
+                  >
+                    <Square size={16} />
+                    Stop
+                  </button>
+                  <button
+                    onClick={restartBattleGroup}
+                    disabled={busy || !selectedBattleGroup || !canUseManager || !battleGroupIsRunning}
+                  >
+                    <RotateCcw size={16} />
+                    Restart
+                  </button>
+                  <button onClick={exportLiveConfig} disabled={busy || !selectedBattleGroup || !canUseManager}>
+                    <Download size={16} />
+                    Export
+                  </button>
+                </div>
               </div>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Map</th>
-                      <th>Replicas</th>
-                      <th>Memory</th>
-                      <th>Scaling</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {battleGroupDetail.serverSets.map((set) => (
-                      <tr key={set.map}>
-                        <td>
-                          <strong>{set.map}</strong>
-                        </td>
-                        <td>{set.replicas}</td>
-                        <td>{set.memoryLimit || "Unset"}</td>
-                        <td>{set.dedicatedScaling ? "Dedicated" : "Fixed"}</td>
+              {battleGroups.length === 0 ? (
+                <EmptyState text="No BattleGroups were found." />
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Title</th>
+                        <th>Phase</th>
+                        <th>Server Sets</th>
+                        <th>Image</th>
+                        <th>Services</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-        </section>
+                    </thead>
+                    <tbody>
+                      {battleGroups.map((group) => (
+                        <tr
+                          key={group.namespace}
+                          className={group.namespace === selectedBattleGroup?.namespace ? "selected" : ""}
+                          onClick={() => {
+                            setSelectedNamespace(group.namespace);
+                            void loadBattleGroupDetail(group);
+                            void loadWorkloads(group.namespace);
+                          }}
+                        >
+                          <td>
+                            <strong>{group.title || group.name}</strong>
+                            <span>{group.namespace}</span>
+                          </td>
+                          <td>
+                            <StatusPill value={group.phase} />
+                          </td>
+                          <td>{group.serverSets}</td>
+                          <td className="mono">{group.serverImage}</td>
+                          <td>
+                            <div className="link-row">
+                              {group.fileBrowserUrl && (
+                                <a href={group.fileBrowserUrl} target="_blank" rel="noreferrer">
+                                  Files <ExternalLink size={14} />
+                                </a>
+                              )}
+                              {group.directorUrl && (
+                                <a href={group.directorUrl} target="_blank" rel="noreferrer">
+                                  Director <ExternalLink size={14} />
+                                </a>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {snapshotPath && <p className="success-line">Snapshot exported to {snapshotPath}</p>}
+            </section>
 
-        <section className="grid two">
-          <article className="panel">
-            <div className="panel-title">
-              <h2>Pods</h2>
-              <span>{pods.length}</span>
-            </div>
-            {pods.length === 0 ? (
-              <EmptyState text="No pod data loaded." />
-            ) : (
-              <div className="compact-list">
-                {pods.map((pod) => {
-                  const status = String(pod.status?.phase ?? "Unknown");
-                  return (
-                    <div key={pod.metadata?.name}>
-                      <strong>{pod.metadata?.name}</strong>
-                      <StatusPill value={status} />
-                    </div>
-                  );
-                })}
+            <section className="panel">
+              <div className="panel-title">
+                <h2>Live Config</h2>
+                <SlidersHorizontal size={19} />
               </div>
-            )}
-          </article>
+              {!battleGroupDetail ? (
+                <EmptyState text="No live BattleGroup detail loaded." />
+              ) : (
+                <>
+                  <section className="config-summary">
+                    <InfoRow label="Title" value={battleGroupDetail.title} />
+                    <InfoRow label="Database" value={battleGroupDetail.databasePhase || "Unknown"} />
+                    <InfoRow
+                      label="Server group"
+                      value={battleGroupDetail.serverGroupPhase || battleGroupDetail.phase}
+                    />
+                    <InfoRow label="Gateway" value={battleGroupDetail.gatewayPhase || "Unknown"} />
+                    <InfoRow label="Director" value={battleGroupDetail.directorPhase || "Unknown"} />
+                    <InfoRow label="Stop flag" value={battleGroupDetail.stop ? "true" : "false"} />
+                  </section>
+                  <div className="image-list">
+                    <strong>Images</strong>
+                    {[battleGroupDetail.serverImage, ...battleGroupDetail.utilityImages]
+                      .filter(Boolean)
+                      .map((image) => (
+                        <span className="mono chip" key={image}>
+                          {image}
+                        </span>
+                      ))}
+                  </div>
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Map</th>
+                          <th>Replicas</th>
+                          <th>Memory</th>
+                          <th>Scaling</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {battleGroupDetail.serverSets.map((set) => (
+                          <tr key={set.map}>
+                            <td>
+                              <strong>{set.map}</strong>
+                            </td>
+                            <td>{set.replicas}</td>
+                            <td>{set.memoryLimit || "Unset"}</td>
+                            <td>{set.dedicatedScaling ? "Dedicated" : "Fixed"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </section>
 
-          <article className="panel">
-            <div className="panel-title">
-              <h2>Services</h2>
-              <span>{services.length}</span>
-            </div>
-            {services.length === 0 ? (
-              <EmptyState text="No service data loaded." />
-            ) : (
-              <div className="compact-list">
-                {services.map((service) => {
-                  const ports = Array.isArray(service.spec?.ports)
-                    ? service.spec?.ports
-                        .map((port: Record<string, unknown>) =>
-                          port.nodePort ? `${port.port}:${port.nodePort}` : String(port.port)
-                        )
-                        .join(", ")
-                    : "";
-                  return (
-                    <div key={service.metadata?.name}>
-                      <strong>{service.metadata?.name}</strong>
-                      <span>{ports}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </article>
-        </section>
+            <section className="grid two">
+              <article className="panel">
+                <div className="panel-title">
+                  <h2>Pods</h2>
+                  <span>{pods.length}</span>
+                </div>
+                {pods.length === 0 ? (
+                  <EmptyState text="No pod data loaded." />
+                ) : (
+                  <div className="compact-list">
+                    {pods.map((pod) => {
+                      const status = String(pod.status?.phase ?? "Unknown");
+                      return (
+                        <div key={pod.metadata?.name}>
+                          <strong>{pod.metadata?.name}</strong>
+                          <StatusPill value={status} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </article>
+
+              <article className="panel">
+                <div className="panel-title">
+                  <h2>Services</h2>
+                  <span>{services.length}</span>
+                </div>
+                {services.length === 0 ? (
+                  <EmptyState text="No service data loaded." />
+                ) : (
+                  <div className="compact-list">
+                    {services.map((service) => {
+                      const ports = Array.isArray(service.spec?.ports)
+                        ? service.spec?.ports
+                            .map((port: Record<string, unknown>) =>
+                              port.nodePort ? `${port.port}:${port.nodePort}` : String(port.port)
+                            )
+                            .join(", ")
+                        : "";
+                      return (
+                        <div key={service.metadata?.name}>
+                          <strong>{service.metadata?.name}</strong>
+                          <span>{ports}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </article>
+            </section>
+          </>
+        )}
       </section>
     </main>
   );

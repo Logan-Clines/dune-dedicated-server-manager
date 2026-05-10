@@ -256,6 +256,17 @@ nav a:hover {
     rgba(255, 255, 255, 0.025);
 }
 
+nav a.disabled {
+  color: rgba(184, 176, 157, 0.38);
+  border-color: transparent;
+  background: transparent;
+  cursor: not-allowed;
+}
+
+nav a.disabled::before {
+  background: rgba(184, 176, 157, 0.16);
+}
+
 nav a.active::before,
 nav a:hover::before {
   background: linear-gradient(180deg, var(--sand-hot), var(--teal));
@@ -724,6 +735,36 @@ tr:hover {
   color: var(--muted);
   text-align: center;
   background: rgba(8, 11, 10, 0.64);
+}
+
+.tool-required {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 18px;
+  border-color: rgba(245, 200, 119, 0.38);
+  background:
+    linear-gradient(135deg, rgba(245, 200, 119, 0.12), rgba(94, 216, 200, 0.035)),
+    repeating-linear-gradient(96deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 8px),
+    var(--panel-strong);
+}
+
+.tool-required > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tool-required svg {
+  color: var(--sand-hot);
+  filter: drop-shadow(0 0 12px rgba(245, 200, 119, 0.28));
+}
+
+.tool-required p {
+  grid-column: 1 / -1;
+  max-width: 820px;
+  color: var(--muted);
+  font-size: 14px;
 }
 
 .success-line {
