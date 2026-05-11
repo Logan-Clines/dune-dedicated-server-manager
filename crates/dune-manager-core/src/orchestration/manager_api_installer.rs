@@ -53,6 +53,17 @@ pub struct ManagerApiInstallRequest {
     pub log_path: String,
     /// Guest kubeconfig path used by the root-owned OpenRC service.
     pub kubeconfig_path: String,
+    /// Service manager used by the guest operating system.
+    pub service_manager: ManagerApiServiceManager,
+}
+
+/// Service manager used to run the Manager API on the remote host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagerApiServiceManager {
+    /// OpenRC service used by the vendor VM.
+    OpenRc,
+    /// systemd service used by Ubuntu.
+    Systemd,
 }
 
 impl ManagerApiInstallRequest {
@@ -73,6 +84,7 @@ impl ManagerApiInstallRequest {
             env_path: DEFAULT_ENV_PATH.to_string(),
             log_path: DEFAULT_LOG_PATH.to_string(),
             kubeconfig_path: DEFAULT_KUBECONFIG_PATH.to_string(),
+            service_manager: ManagerApiServiceManager::OpenRc,
         }
     }
 
@@ -138,7 +150,7 @@ where
         Self { runner }
     }
 
-    /// Uploads the binary, writes the OpenRC service, starts it, and checks `/health`.
+    /// Uploads the binary, writes the service, starts it, and checks `/health`.
     pub fn install(
         &self,
         request: &ManagerApiInstallRequest,
@@ -171,7 +183,7 @@ where
         emit_manager_event(
             sink,
             "manager.write-service",
-            "Installing Manager API OpenRC service.",
+            "Installing Manager API service.",
             StepAction::Configure,
         );
         self.write_service(request)?;
@@ -206,10 +218,17 @@ where
     pub fn status(&self, port: u16) -> CommandResult<ManagerApiStatus> {
         let script = format!(
             r#"set -eu
-out=$(wget -qO- {} 2>/dev/null || true)
+if command -v curl >/dev/null 2>&1; then
+  out=$(curl -fsSL --max-time 5 {} 2>/dev/null || true)
+elif command -v wget >/dev/null 2>&1; then
+  out=$(wget -qO- {} 2>/dev/null || true)
+else
+  out=""
+fi
 printf '%s' "$out"
 "#,
-            shell_quote(&health_url(port))
+            shell_quote(&health_url(port)),
+            shell_quote(&health_url(port)),
         );
         let output = self.runner.run_script(&script)?;
         let trimmed = output.trim().to_string();
@@ -269,6 +288,13 @@ printf '%s' "$out"
     }
 
     fn write_service(&self, request: &ManagerApiInstallRequest) -> CommandResult<()> {
+        match request.service_manager {
+            ManagerApiServiceManager::OpenRc => self.write_openrc_service(request),
+            ManagerApiServiceManager::Systemd => self.write_systemd_service(request),
+        }
+    }
+
+    fn write_openrc_service(&self, request: &ManagerApiInstallRequest) -> CommandResult<()> {
         let service = format!(
             r#"#!/sbin/openrc-run
 name="Dune Manager API"
@@ -303,6 +329,33 @@ start_pre() {{
         self.install_text_file(DEFAULT_SERVICE_PATH, "0755", &service)
     }
 
+    fn write_systemd_service(&self, request: &ManagerApiInstallRequest) -> CommandResult<()> {
+        let service_path = format!("/etc/systemd/system/{}.service", request.service_name);
+        let service = format!(
+            r#"[Unit]
+Description=Dune Manager API
+After=network-online.target k3s.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile={env_path}
+ExecStart={binary_path}
+Restart=always
+RestartSec=2
+StandardOutput=append:{log_path}
+StandardError=append:{log_path}
+
+[Install]
+WantedBy=multi-user.target
+"#,
+            env_path = request.env_path,
+            binary_path = request.remote_binary_path,
+            log_path = request.log_path,
+        );
+        self.install_text_file(&service_path, "0644", &service)
+    }
+
     fn install_text_file(&self, path: &str, mode: &str, content: &str) -> CommandResult<()> {
         let script = format!(
             "set -eu\ntmp=$(mktemp)\ncat > \"$tmp\" <<'__DUNE_MANAGER_FILE__'\n{}{}__DUNE_MANAGER_FILE__\nsudo install -D -m {} \"$tmp\" {}\nrm -f \"$tmp\"\n",
@@ -318,7 +371,20 @@ start_pre() {{
     fn restart_service(&self, service_name: &str) -> CommandResult<()> {
         let service_name = shell_quote(service_name);
         let script = format!(
-            "set -eu\nsudo rc-update add {service_name} default >/dev/null 2>&1 || true\nsudo rc-service {service_name} stop >/dev/null 2>&1 || true\nsudo rc-service {service_name} start\n"
+            r#"set -eu
+if command -v systemctl >/dev/null 2>&1; then
+  sudo systemctl daemon-reload
+  sudo systemctl enable {service_name}.service >/dev/null
+  sudo systemctl restart {service_name}.service
+elif command -v rc-service >/dev/null 2>&1; then
+  sudo rc-update add {service_name} default >/dev/null 2>&1 || true
+  sudo rc-service {service_name} stop >/dev/null 2>&1 || true
+  sudo rc-service {service_name} start
+else
+  echo "No supported service manager found for Manager API." >&2
+  exit 1
+fi
+"#
         );
         self.runner.run_script(&script)?;
         Ok(())

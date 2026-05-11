@@ -13,10 +13,10 @@ use crate::{
         DuneVmDetector, ExperimentalSwapOrchestrator, ExperimentalSwapRequest,
         GuestBootstrapOrchestrator, GuestBootstrapPlan, GuestNetworkConfig,
         HyperVVmLifecycleOrchestrator, HyperVVmSetupOrchestrator, HyperVVmSetupRequest,
-        InstanceMap, ManagerApiInstallRequest, ManagerApiInstaller, MapInstanceOrchestrator,
-        MemoryProfile, OpenSshGuestProvider, OpenSshRunner, OpenSshTarget, OrchestrationEvent,
-        SetMapInstancesRequest, SshGuestBootstrapProvider, StepAction, StepDomain,
-        StrictPowerShellHyperV, StructuredBattlegroupOps, StructuredKubectl,
+        InstanceMap, ManagerApiInstallRequest, ManagerApiInstaller, ManagerApiServiceManager,
+        MapInstanceOrchestrator, MemoryProfile, OpenSshGuestProvider, OpenSshRunner, OpenSshTarget,
+        OrchestrationEvent, SetMapInstancesRequest, SshGuestBootstrapProvider, StepAction,
+        StepDomain, StrictPowerShellHyperV, StructuredBattlegroupOps, StructuredKubectl,
         UbuntuSshPrepareRequest, UbuntuSshSetup, VecOperationSink, VmProvider,
         WorldManifestRequest, DEFAULT_VM_DISK_BYTES,
     },
@@ -516,6 +516,9 @@ fn run_cli(args: Vec<String>) -> CommandResult<Value> {
             if let Some(path) = args.optional("--kubeconfig-path") {
                 request.kubeconfig_path = path;
             }
+            if args.has_flag("--systemd") {
+                request.service_manager = ManagerApiServiceManager::Systemd;
+            }
             let mut sink = VecOperationSink::default();
             let result =
                 ManagerApiInstaller::new(ssh_runner(&args)?).install(&request, &mut sink)?;
@@ -922,7 +925,7 @@ fn usage() -> Vec<&'static str> {
         "dune-manager-cli bg update --ssh PATH --key PATH --host IP --namespace NS --name BG",
         "dune-manager-cli bg file-browser-url --ssh PATH --key PATH --host IP --vm-ip IP",
         "dune-manager-cli bg director-url --ssh PATH --key PATH --host IP --namespace NS --name BG --vm-ip IP",
-        "dune-manager-cli manager install --ssh PATH --key PATH --host IP --binary PATH --namespace NS (--token TOKEN | --token-file PATH | --token-env NAME) [--port 8787] [--director-base-url URL] [--kubeconfig-path /etc/rancher/k3s/k3s.yaml] [--user dune]",
+        "dune-manager-cli manager install --ssh PATH --key PATH --host IP --binary PATH --namespace NS (--token TOKEN | --token-file PATH | --token-env NAME) [--port 8787] [--director-base-url URL] [--kubeconfig-path /etc/rancher/k3s/k3s.yaml] [--systemd] [--user dune]",
         "dune-manager-cli manager status --ssh PATH --key PATH --host IP [--port 8787] [--user dune]",
     ]
 }
