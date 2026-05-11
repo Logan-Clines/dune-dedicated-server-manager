@@ -8,12 +8,12 @@ use crate::{
     orchestration::{
         battlegroup_command_catalog, detect_player_address_candidates, hyperv_initial_setup_flow,
         BattlegroupManagementOrchestrator, BattlegroupRef, BattlegroupUpdateOrchestrator,
-        GuestBootstrapOrchestrator, GuestBootstrapPlan, HyperVVmLifecycleOrchestrator,
-        HyperVVmSetupOrchestrator, HyperVVmSetupRequest, ManagerApiInstallRequest,
-        ManagerApiInstaller, MemoryProfile, OpenSshGuestProvider, OpenSshRunner, OpenSshTarget,
-        OrchestrationEvent, SshGuestBootstrapProvider, StrictPowerShellHyperV,
-        StructuredBattlegroupOps, StructuredKubectl, VecOperationSink, VmProvider,
-        DEFAULT_VM_DISK_BYTES,
+        GuestBootstrapOrchestrator, GuestBootstrapPlan, GuestNetworkConfig,
+        HyperVVmLifecycleOrchestrator, HyperVVmSetupOrchestrator, HyperVVmSetupRequest,
+        ManagerApiInstallRequest, ManagerApiInstaller, MemoryProfile, OpenSshGuestProvider,
+        OpenSshRunner, OpenSshTarget, OrchestrationEvent, SshGuestBootstrapProvider,
+        StrictPowerShellHyperV, StructuredBattlegroupOps, StructuredKubectl, VecOperationSink,
+        VmProvider, DEFAULT_VM_DISK_BYTES,
     },
     toolchain::{ManagedTool, Toolchain},
 };
@@ -171,6 +171,22 @@ fn run_cli(args: Vec<String>) -> CommandResult<Value> {
             let player_ip = args.required("--player-ip")?;
             let guest = ssh_guest_provider(&args)?;
             guest.write_player_settings(&host, &player_ip)?;
+            Ok(json!({ "ok": true }))
+        }
+        ["guest", "apply-static-network"] => {
+            let host = args.required("--host")?;
+            let guest = ssh_guest_provider(&args)?;
+            guest.apply_static_network(
+                &host,
+                &GuestNetworkConfig {
+                    interface: args
+                        .optional("--interface")
+                        .unwrap_or_else(|| "eth0".to_string()),
+                    address_cidr: args.required("--address-cidr")?,
+                    gateway: args.required("--gateway")?,
+                    dns: args.required("--dns")?,
+                },
+            )?;
             Ok(json!({ "ok": true }))
         }
         ["guest", "bootstrap"] => {
@@ -494,6 +510,7 @@ fn usage() -> Vec<&'static str> {
         "dune-manager-cli token plan (--token JWT | --token-file PATH | --token-env NAME) --player-ip IP --world-name NAME [--region \"Europe Test\"]",
         "dune-manager-cli guest player-candidates --ssh PATH --key PATH --host IP [--user dune]",
         "dune-manager-cli guest write-player-settings --ssh PATH --key PATH --host IP --player-ip IP [--user dune]",
+        "dune-manager-cli guest apply-static-network --ssh PATH --key PATH --host IP --address-cidr IP/PREFIX --gateway IP --dns IP [--interface eth0] [--user dune]",
         "dune-manager-cli guest bootstrap --ssh PATH --key PATH --host IP (--token JWT | --token-file PATH | --token-env NAME) --player-ip IP --world-name NAME [--region \"Europe Test\"] [--user dune]",
         "dune-manager-cli bg list --ssh PATH --key PATH --host IP [--user dune]",
         "dune-manager-cli bg status --ssh PATH --key PATH --host IP --namespace NS --name BG [--user dune]",
