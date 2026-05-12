@@ -219,6 +219,9 @@ pub async fn patch_battlegroup_layout(
             &mut operations,
         )?;
     }
+    if let Some(enabled) = request.social_hubs_enabled {
+        append_social_hubs_patch(&data, enabled, &mut operations)?;
+    }
 
     let mut battlegroup_patched = false;
     let mut patched = item;
@@ -241,11 +244,6 @@ pub async fn patch_battlegroup_layout(
     if pvp > 0 {
         warnings.push(
             "Deep Desert PvP config requires the runtime config writer; this endpoint only updated partition counts.".to_string(),
-        );
-    }
-    if request.social_hubs_enabled.is_some() {
-        warnings.push(
-            "Social Hubs are currently detected but not changed by this endpoint.".to_string(),
         );
     }
     let layout = world_layout_from_object(patched, battlegroup_patched, warnings.clone());
@@ -421,10 +419,10 @@ fn world_layout_from_object(
     let survival_ids = partition_ids_for_map(&data, "Survival_1");
     let deep_desert_ids = partition_ids_for_map(&data, "DeepDesert_1");
     let server_sets = summarize_server_sets(&data);
-    let social_hubs_enabled = server_sets.iter().any(|set| {
-        let map = set.map.to_ascii_lowercase();
-        map.contains("social") || map.contains("hub")
-    });
+    let social_hubs_enabled = server_sets
+        .iter()
+        .filter(|set| is_social_hub_map(&set.map))
+        .any(|set| set.replicas > 0);
 
     WorldLayout {
         hagga_basin_instances: survival_ids.len().max(1),
@@ -436,6 +434,46 @@ fn world_layout_from_object(
         restart_required,
         warnings,
     }
+}
+
+fn append_social_hubs_patch(
+    data: &Value,
+    enabled: bool,
+    operations: &mut Vec<Value>,
+) -> Result<(), ApiError> {
+    let sets = data["spec"]["serverGroup"]["template"]["spec"]["sets"]
+        .as_array()
+        .ok_or_else(|| ApiError::bad_request("BattleGroup server sets are not an array"))?;
+    let desired_replicas = if enabled { 1 } else { 0 };
+    let mut matched = 0;
+
+    for (index, set) in sets.iter().enumerate() {
+        let Some(map) = set["map"].as_str() else {
+            continue;
+        };
+        if !is_social_hub_map(map) {
+            continue;
+        }
+        matched += 1;
+        if set["replicas"].as_u64().unwrap_or_default() != desired_replicas {
+            operations.push(json!({
+                "op": "replace",
+                "path": format!("/spec/serverGroup/template/spec/sets/{index}/replicas"),
+                "value": desired_replicas,
+            }));
+        }
+    }
+
+    if matched == 0 {
+        return Err(ApiError::bad_request(
+            "BattleGroup has no Social Hub server sets",
+        ));
+    }
+    Ok(())
+}
+
+fn is_social_hub_map(map: &str) -> bool {
+    matches!(map, "SH_Arrakeen" | "SH_HarkoVillage")
 }
 
 fn append_partition_patch(
@@ -586,6 +624,38 @@ fn string_at_paths(data: &Value, paths: &[&[&str]]) -> String {
 mod tests {
     use super::*;
 
+    fn sample_battlegroup_data() -> Value {
+        json!({
+            "spec": {
+                "serverGroup": {
+                    "template": {
+                        "spec": {
+                            "sets": [
+                                { "map": "Survival_1", "replicas": 1 },
+                                { "map": "SH_Arrakeen", "replicas": 0 },
+                                { "map": "SH_HarkoVillage", "replicas": 0 }
+                            ]
+                        }
+                    }
+                },
+                "database": {
+                    "template": {
+                        "spec": {
+                            "deployment": {
+                                "spec": {
+                                    "worldPartitions": [
+                                        { "map": "Survival_1", "partitions": [{ "id": 1, "dimension": 0, "disable": false }] },
+                                        { "map": "DeepDesert_1", "partitions": [{ "id": 8, "dimension": 0, "disable": false }] }
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+
     #[test]
     fn rejects_multiple_deep_desert_instances() {
         let request = WorldLayoutUpdateRequest {
@@ -597,5 +667,35 @@ mod tests {
 
         let err = validate_world_layout_update(&request).unwrap_err();
         assert!(err.message.contains("Only one Deep Desert"));
+    }
+
+    #[test]
+    fn builds_social_hub_replica_patch() {
+        let data = sample_battlegroup_data();
+        let mut operations = Vec::new();
+        append_social_hubs_patch(&data, true, &mut operations).unwrap();
+
+        assert_eq!(operations.len(), 2);
+        assert_eq!(
+            operations[0]["path"],
+            "/spec/serverGroup/template/spec/sets/1/replicas"
+        );
+        assert_eq!(operations[0]["value"], 1);
+        assert_eq!(
+            operations[1]["path"],
+            "/spec/serverGroup/template/spec/sets/2/replicas"
+        );
+    }
+
+    #[test]
+    fn detects_social_hubs_only_when_replicas_are_enabled() {
+        let object = DynamicObject {
+            types: None,
+            metadata: Default::default(),
+            data: sample_battlegroup_data(),
+        };
+
+        let layout = world_layout_from_object(object, false, Vec::new());
+        assert!(!layout.social_hubs_enabled);
     }
 }
