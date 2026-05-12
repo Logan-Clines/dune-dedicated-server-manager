@@ -10,6 +10,7 @@
     type DirectorPathCapability,
     type DirectorPlayerLists,
     type IniSection,
+    type LogExportResponse,
     type LogsResponse,
     type Overview,
     type Session,
@@ -50,6 +51,7 @@
   let logViewer: HTMLDivElement | null = null;
   let logStreamSocket: WebSocket | null = null;
   let logStreaming = false;
+  let logExporting = false;
   let logStreamError = "";
   let titleDraft = "";
   let lifecycleBusy = "";
@@ -322,6 +324,34 @@
     selectedContainer = container;
     page = "logs";
     void loadLogs();
+  }
+
+  async function exportAllLogs() {
+    logExporting = true;
+    logStreamError = "";
+    error = "";
+    try {
+      const result = await api<LogExportResponse>("/api/logs/export?tail=500");
+      const createdAt = new Date(result.generatedAtUnixMs).toISOString().replace(/[:.]/g, "-");
+      const fileName = `dune-log-export-${createdAt}.json`;
+      const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+      const containerCount = result.pods.reduce((count, pod) => count + pod.containers.length, 0);
+      logLines = [
+        `Exported ${result.pods.length} pods and ${containerCount} containers.`,
+        `Tail: ${result.tailLines} lines per container.`,
+        result.errors.length ? `Errors: ${result.errors.length}` : "Errors: 0",
+      ];
+    } catch (err) {
+      error = message(err);
+    } finally {
+      logExporting = false;
+    }
   }
 
   function startLogStream() {
@@ -1193,6 +1223,9 @@
           <div class="actions">
             <button disabled={!selectedPod || logStreaming} on:click={loadLogs}>Load tail</button>
             <button disabled={!selectedPod || logStreaming} on:click={startLogStream}>Follow live</button>
+            <button disabled={logStreaming || logExporting} on:click={exportAllLogs}>
+              {logExporting ? "Exporting..." : "Export all pods"}
+            </button>
             <button disabled={!logStreaming} class="danger" on:click={stopLogStream}>Stop stream</button>
           </div>
           {#if logStreamError}<p class="warn">{logStreamError}</p>{/if}

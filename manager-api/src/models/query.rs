@@ -18,6 +18,12 @@ pub struct LogStreamQuery {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogExportQuery {
+    pub tail: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct WsQuery {
     pub token: Option<String>,
 }

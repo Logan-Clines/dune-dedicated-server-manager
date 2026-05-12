@@ -145,6 +145,18 @@ export type LogsResponse = {
   lines: string[];
 };
 
+export type LogExportResponse = {
+  namespace: string;
+  generatedAtUnixMs: number;
+  tailLines: number;
+  pods: Array<{
+    name: string;
+    phase: string;
+    containers: Array<{ name: string; lines: string[] }>;
+  }>;
+  errors: Array<{ pod: string; container?: string; message: string }>;
+};
+
 export type UserSettingsCatalog = {
   files: UserSettingsFileSummary[];
 };

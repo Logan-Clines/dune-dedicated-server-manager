@@ -177,6 +177,15 @@ pub fn document() -> Value {
                     "responses": { "200": { "description": "Redacted log lines" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
                 }
             },
+            "/api/logs/export": {
+                "get": {
+                    "summary": "Export redacted tail logs for all pod containers",
+                    "parameters": [
+                        { "name": "tail", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 5000 } }
+                    ],
+                    "responses": { "200": { "description": "Redacted log export bundle" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+                }
+            },
             "/api/logs/stream": {
                 "get": {
                     "summary": "Stream pod logs over websocket",

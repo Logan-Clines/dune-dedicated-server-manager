@@ -81,6 +81,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/services", get(services))
         .route("/api/workloads", get(workloads))
         .route("/api/logs", get(logs))
+        .route("/api/logs/export", get(logs_export))
         .route("/api/logs/stream", get(logs_stream))
         .route(
             "/api/config/user-settings",
@@ -539,6 +540,81 @@ async fn logs(
         "container": query.container,
         "lines": redact_text(&text).lines().collect::<Vec<_>>()
     })))
+}
+
+async fn logs_export(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<LogExportQuery>,
+) -> ApiResponse<LogExportResponse> {
+    authorize(&state, &headers, None)?;
+    let tail_lines = query.tail.unwrap_or(400).clamp(1, 5000);
+    let pods_api: Api<Pod> = Api::namespaced(state.client.clone(), &state.namespace);
+    let pod_list = pods_api
+        .list(&Default::default())
+        .await
+        .context("failed to list pods for log export")?;
+    let mut pods = Vec::new();
+    let mut errors = Vec::new();
+
+    for pod in pod_list {
+        let name = pod.metadata.name.clone().unwrap_or_default();
+        if name.is_empty() {
+            continue;
+        }
+        let phase = pod
+            .status
+            .as_ref()
+            .and_then(|status| status.phase.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
+        let container_names = pod
+            .spec
+            .as_ref()
+            .map(|spec| {
+                spec.containers
+                    .iter()
+                    .map(|container| container.name.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let mut containers = Vec::new();
+
+        for container in container_names {
+            let params = LogParams {
+                container: Some(container.clone()),
+                tail_lines: Some(tail_lines),
+                ..Default::default()
+            };
+            match pods_api.logs(&name, &params).await {
+                Ok(text) => containers.push(ContainerLogExport {
+                    name: container,
+                    lines: redact_text(&text)
+                        .lines()
+                        .map(ToString::to_string)
+                        .collect(),
+                }),
+                Err(err) => errors.push(LogExportError {
+                    pod: name.clone(),
+                    container: Some(container),
+                    message: err.to_string(),
+                }),
+            }
+        }
+
+        pods.push(PodLogExport {
+            name,
+            phase,
+            containers,
+        });
+    }
+
+    Ok(Json(LogExportResponse {
+        namespace: state.namespace.clone(),
+        generated_at_unix_ms: now_unix_ms(),
+        tail_lines,
+        pods,
+        errors,
+    }))
 }
 
 async fn logs_stream(
