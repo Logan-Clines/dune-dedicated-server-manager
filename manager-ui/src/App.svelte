@@ -289,6 +289,9 @@
     if (nextPage === "storage" && !storageClaims.length && !storageBusy) {
       void loadStorage(false);
     }
+    if (nextPage === "settings" && !managerSelf && !managerBusy) {
+      void loadManagerSelf(false);
+    }
     if (nextPage === "director" && !directorFlsDraft && !directorTransferDraft && !directorAutoLoading) {
       directorAutoLoading = true;
       void loadDirectorConfig().finally(() => {
@@ -951,13 +954,13 @@
     }
   }
 
-  async function loadManagerSelf() {
+  async function loadManagerSelf(showError = true) {
     managerBusy = "self";
-    error = "";
+    if (showError) error = "";
     try {
       managerSelf = await api<ManagerSelf>("/api/manager/self");
     } catch (err) {
-      error = message(err);
+      if (showError) error = message(err);
     } finally {
       managerBusy = "";
     }
@@ -2925,24 +2928,49 @@
           <div class="logs" bind:this={logViewer}>{#each logLines as line}<div>{line}</div>{/each}</div>
         </section>
       {:else if page === "settings"}
-        <section class="panel form">
-          <h2>Settings</h2>
-          <label>Display name <input bind:value={titleDraft} /></label>
-          <button on:click={saveTitle}>Save name</button>
-        </section>
-        <section class="panel form">
+        <section class="panel manager-settings-panel">
           <div class="split-heading">
             <div>
-              <h2>Manager API</h2>
-              <p class="muted">Inspect the local control service that powers this web manager.</p>
+              <p class="eyebrow">Administration</p>
+              <h2>Manager Settings</h2>
+              <p class="muted">Manage the server display name, session state, and the local control API.</p>
             </div>
             <div class="actions">
-              <button disabled={!!managerBusy} on:click={loadManagerSelf}>
+              <button disabled={!!managerBusy} on:click={() => loadManagerSelf()}>
                 {managerBusy === "self" ? "Loading..." : "Load status"}
               </button>
               <button disabled={!!managerBusy} on:click={loadManagerLogs}>
                 {managerBusy === "logs" ? "Loading..." : "Load logs"}
               </button>
+              <button class="ghost" on:click={logout}>Sign out</button>
+            </div>
+          </div>
+          <div class="manager-summary">
+            <article>
+              <span>Signed in</span>
+              <strong>{session.authEnabled ? "Token protected" : "Local access"}</strong>
+              <p>{session.namespace}</p>
+            </article>
+            <article class:good={telemetryConnected}>
+              <span>Live telemetry</span>
+              <strong>{telemetryConnected ? "Connected" : "Polling"}</strong>
+              <p>{telemetrySnapshots} snapshots{telemetryLastAt ? `, last ${telemetryLastAt}` : ""}</p>
+            </article>
+            <article class:good={managerSelf?.directorConfigured}>
+              <span>Director bridge</span>
+              <strong>{managerSelf ? managerSelf.directorConfigured ? "Reachable" : "Unavailable" : "Loading"}</strong>
+              <p>Player, map, and rule coverage.</p>
+            </article>
+          </div>
+          <label>Server display name <input bind:value={titleDraft} /></label>
+          <button on:click={saveTitle}>Save display name</button>
+          {#if telemetryError}<p class="warn">{telemetryError}</p>{/if}
+        </section>
+        <section class="panel form">
+          <div class="split-heading">
+            <div>
+              <h2>Control API</h2>
+              <p class="muted">Inspect the local service that powers this web manager.</p>
             </div>
           </div>
           {#if managerSelf}
@@ -2953,12 +2981,17 @@
               <div class="row"><span>PID</span><b>{managerSelf.pid}</b></div>
               <div class="row"><span>Port</span><b>{managerSelf.port}</b></div>
               <div class="row"><span>Director</span><b>{managerSelf.directorConfigured ? "Reachable" : "Unavailable"}</b></div>
-              <div class="row"><span>Binary</span><b>{managerSelf.binaryPath}</b></div>
-              <div class="row"><span>Environment</span><b>{managerSelf.envPath}</b></div>
-              <div class="row"><span>Log</span><b>{managerSelf.logPath}</b></div>
             </div>
+            <details class="technical-details">
+              <summary>Runtime paths</summary>
+              <div class="rows compact">
+                <div class="row"><span>Binary</span><b>{managerSelf.binaryPath}</b></div>
+                <div class="row"><span>Environment</span><b>{managerSelf.envPath}</b></div>
+                <div class="row"><span>Log</span><b>{managerSelf.logPath}</b></div>
+              </div>
+            </details>
           {:else}
-            <p class="muted">Load Manager API status to inspect process paths, uptime, and service health.</p>
+            <p class="muted">Loading Manager API status.</p>
           {/if}
 
           {#if managerLogs}

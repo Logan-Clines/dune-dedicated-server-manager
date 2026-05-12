@@ -474,6 +474,50 @@ header,
   margin-top: 0.75rem;
 }
 
+.manager-settings-panel {
+  gap: 1rem;
+}
+
+.manager-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.manager-summary article {
+  min-height: 7rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(214, 187, 133, 0.13);
+  border-radius: 8px;
+  background: rgba(8, 7, 6, 0.3);
+}
+
+.manager-summary span,
+.manager-summary strong {
+  display: block;
+}
+
+.manager-summary span {
+  color: #b9aa91;
+  font-size: 0.78rem;
+}
+
+.manager-summary strong {
+  margin-top: 0.25rem;
+  color: #f2d492;
+  font-size: 1.15rem;
+}
+
+.manager-summary p {
+  margin: 0.55rem 0 0;
+  color: #d9d1c4;
+  overflow-wrap: anywhere;
+}
+
+.manager-summary article.good {
+  background: rgba(44, 92, 57, 0.2);
+}
+
 .layout-panel {
   position: relative;
   overflow: hidden;
@@ -1871,7 +1915,8 @@ header,
   .dashboard-metrics,
   .issue-list article,
   .server-command-grid,
-  .server-status-grid {
+  .server-status-grid,
+  .manager-summary {
     grid-template-columns: 1fr;
   }
 
