@@ -134,6 +134,7 @@
   let settingsAutoLoading = false;
   let settingsBackups: UserSettingsBackupsResponse | null = null;
   let settingsNotice = "";
+  let settingsRestartRecommended = false;
   let settingsFilter = "";
   let directorFlsDraft = "";
   let directorTransferDraft = "";
@@ -227,7 +228,7 @@
   $: visibleDatabasePlayers = filterDatabasePlayers(databasePlayers?.rows ?? [], playerFilter);
   $: visibleDatabaseGuilds = filterDatabaseGuilds(databaseGuilds?.rows ?? [], playerFilter);
   $: serverHealth = deriveServerHealth(overview, battlegroup, notReadyPods);
-  $: nextActions = deriveNextActions(battlegroup, overview, databaseMaintenance, lifecycleBusy);
+  $: nextActions = deriveNextActions(battlegroup, overview, databaseMaintenance, lifecycleBusy, settingsRestartRecommended);
   $: dashboardIssues = deriveDashboardIssues(
     battlegroup,
     overview,
@@ -235,6 +236,7 @@
     databaseMaintenance,
     telemetryError,
     events,
+    settingsRestartRecommended,
   );
   $: if (selectedContainer && selectedPodSummary && !selectedPodSummary.containers.includes(selectedContainer)) {
     selectedContainer = "";
@@ -451,6 +453,7 @@
     lifecycleBusy = action;
     try {
       await api(`/api/battlegroups/${battlegroup.namespace}/${battlegroup.name}/${action}`, { method: "POST" });
+      if (action === "restart") settingsRestartRecommended = false;
       await refresh();
     } catch (err) {
       error = message(err);
@@ -962,6 +965,7 @@
       settingsNotice = result.restartRecommended
         ? "Saved. Restart the battlegroup for every runtime system to pick up the change."
         : "Saved.";
+      settingsRestartRecommended = result.restartRecommended;
       await loadSettingsBackups(settingsFile.id);
     } catch (err) {
       error = message(err);
@@ -1039,6 +1043,7 @@
       settingsNotice = result.restartRecommended
         ? "Backup restored. Restart the battlegroup for every runtime system to pick up the change."
         : "Backup restored.";
+      settingsRestartRecommended = result.restartRecommended;
       await loadSettingsBackups(settingsFile.id);
     } catch (err) {
       error = message(err);
@@ -1661,6 +1666,7 @@
     overviewValue: Overview | null,
     databaseValue: DatabaseMaintenanceResponse | null,
     busyAction: string,
+    settingsRestart: boolean,
   ) {
     const actions: Array<{ label: string; hint: string; page?: Page; action?: "start" | "stop" | "restart"; danger?: boolean; disabled?: boolean }> = [];
     if (!battlegroupValue) {
@@ -1671,8 +1677,12 @@
       actions.push({ label: "Start server", hint: "Bring the world online", action: "start", disabled: !!busyAction });
     } else {
       actions.push({ label: "Manage players", hint: `${overviewValue?.players?.active ?? 0} active now`, page: "players" });
-      actions.push({ label: "Edit game settings", hint: "INI-backed runtime settings", page: "config" });
-      actions.push({ label: "Restart server", hint: "Apply pending runtime changes", action: "restart", disabled: !!busyAction });
+      if (settingsRestart) {
+        actions.push({ label: "Restart server", hint: "Apply saved game settings", action: "restart", disabled: !!busyAction });
+      } else {
+        actions.push({ label: "Edit game settings", hint: "INI-backed runtime settings", page: "config" });
+      }
+      actions.push({ label: "Server health", hint: "Check runtime services", page: "workloads" });
       actions.push({ label: "Stop server", hint: "Disconnects online players", action: "stop", danger: true, disabled: !!busyAction });
     }
     actions.push({
@@ -1694,6 +1704,7 @@
     databaseValue: DatabaseMaintenanceResponse | null,
     telemetryMessage: string,
     eventItems: EventSummary[],
+    settingsRestart: boolean,
   ): DashboardIssue[] {
     const issues: DashboardIssue[] = [];
     if (!overviewValue) {
@@ -1704,6 +1715,14 @@
       issues.push({ title: "No server detected", detail: "No battlegroup is available in this namespace.", tone: "danger", page: "settings" });
     } else if (battlegroupValue.stop) {
       issues.push({ title: "Server is offline", detail: "Start the server when you are ready for players to connect.", tone: "danger", page: "battlegroup" });
+    }
+    if (settingsRestart) {
+      issues.push({
+        title: "Restart pending",
+        detail: "Saved game settings need a server restart before every runtime system picks them up.",
+        tone: "warn",
+        page: "battlegroup",
+      });
     }
     if (notReady.length) {
       const names = notReady.slice(0, 3).map((pod) => pod.name).join(", ");
@@ -2573,6 +2592,18 @@
               </section>
             {/if}
             {#if settingsNotice}<p class="warn">{settingsNotice}</p>{/if}
+            {#if settingsRestartRecommended}
+              <section class="backup-readiness warning">
+                <div>
+                  <span>Restart pending</span>
+                  <strong>Game settings saved</strong>
+                </div>
+                <p>Restart the server to apply the saved settings to every runtime component.</p>
+                <button disabled={!battlegroup || battlegroupStopped || !!lifecycleBusy} on:click={() => lifecycle("restart")}>
+                  {lifecycleBusy === "restart" ? "Restarting..." : battlegroupStopped ? "Start server first" : "Restart server"}
+                </button>
+              </section>
+            {/if}
             <section class="backup-panel">
               <div class="editor-title">
                 <div>
