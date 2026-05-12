@@ -61,11 +61,21 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: app/package-lock.json
+          cache-dependency-path: |
+            app/package-lock.json
+            manager-ui/package-lock.json
 
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci
+
+      - name: Install Manager UI dependencies
+        working-directory: manager-ui
+        run: npm ci
+
+      - name: Build Manager UI
+        working-directory: manager-ui
+        run: npm run build
 
       - name: Resolve release version
         shell: pwsh

@@ -516,6 +516,12 @@ fn run_cli(args: Vec<String>) -> CommandResult<Value> {
             if let Some(path) = args.optional("--kubeconfig-path") {
                 request.kubeconfig_path = path;
             }
+            if let Some(path) = args.optional("--ui-dist") {
+                request.ui_dist_path = Some(path.into());
+            }
+            if let Some(path) = args.optional("--remote-ui-dir") {
+                request.remote_ui_dir = path;
+            }
             if args.has_flag("--systemd") {
                 request.service_manager = ManagerApiServiceManager::Systemd;
             }
@@ -925,7 +931,7 @@ fn usage() -> Vec<&'static str> {
         "dune-manager-cli bg update --ssh PATH --key PATH --host IP --namespace NS --name BG",
         "dune-manager-cli bg file-browser-url --ssh PATH --key PATH --host IP --vm-ip IP",
         "dune-manager-cli bg director-url --ssh PATH --key PATH --host IP --namespace NS --name BG --vm-ip IP",
-        "dune-manager-cli manager install --ssh PATH --key PATH --host IP --binary PATH --namespace NS (--token TOKEN | --token-file PATH | --token-env NAME) [--port 8787] [--director-base-url URL] [--kubeconfig-path /etc/rancher/k3s/k3s.yaml] [--systemd] [--user dune]",
+        "dune-manager-cli manager install --ssh PATH --key PATH --host IP --binary PATH --namespace NS (--token TOKEN | --token-file PATH | --token-env NAME) [--port 8787] [--director-base-url URL] [--kubeconfig-path /etc/rancher/k3s/k3s.yaml] [--ui-dist PATH] [--remote-ui-dir /opt/dune-manager/manager-ui] [--systemd] [--user dune]",
         "dune-manager-cli manager status --ssh PATH --key PATH --host IP [--port 8787] [--user dune]",
     ]
 }

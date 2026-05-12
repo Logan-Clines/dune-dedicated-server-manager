@@ -28,7 +28,8 @@
     "targets": ["nsis"],
     "createUpdaterArtifacts": true,
     "resources": {
-      "resources/manager-api": "manager-api"
+      "resources/manager-api": "manager-api",
+      "../../manager-ui/dist": "manager-ui"
     },
     "icon": ["icons/icon.ico"]
   },

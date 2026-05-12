@@ -2,7 +2,7 @@
 
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     thread,
     time::Duration,
 };
@@ -20,6 +20,7 @@ use crate::{
 };
 
 const DEFAULT_REMOTE_BINARY_PATH: &str = "/opt/dune-manager/dune-manager-api";
+const DEFAULT_REMOTE_UI_DIR: &str = "/opt/dune-manager/manager-ui";
 const DEFAULT_ENV_PATH: &str = "/etc/dune-manager-api.env";
 const DEFAULT_SERVICE_PATH: &str = "/etc/init.d/dune-manager-api";
 const DEFAULT_LOG_PATH: &str = "/var/log/dune-manager-api.log";
@@ -43,6 +44,10 @@ pub struct ManagerApiInstallRequest {
     pub port: u16,
     /// Optional internal Director base URL. When omitted, the Manager API discovers Director.
     pub director_base_url: Option<String>,
+    /// Optional local static UI build directory to deploy beside the Manager API.
+    pub ui_dist_path: Option<PathBuf>,
+    /// Remote static UI directory served by the Manager API.
+    pub remote_ui_dir: String,
     /// OpenRC service name to install.
     pub service_name: String,
     /// Remote executable path inside the guest VM.
@@ -79,6 +84,8 @@ impl ManagerApiInstallRequest {
             namespace: namespace.into(),
             port: DEFAULT_PORT,
             director_base_url: None,
+            ui_dist_path: None,
+            remote_ui_dir: DEFAULT_REMOTE_UI_DIR.to_string(),
             service_name: DEFAULT_SERVICE_NAME.to_string(),
             remote_binary_path: DEFAULT_REMOTE_BINARY_PATH.to_string(),
             env_path: DEFAULT_ENV_PATH.to_string(),
@@ -98,6 +105,11 @@ impl ManagerApiInstallRequest {
         validate_absolute_remote_path(&self.env_path, "env path")?;
         validate_absolute_remote_path(&self.log_path, "log path")?;
         validate_absolute_remote_path(&self.kubeconfig_path, "kubeconfig path")?;
+        validate_absolute_remote_dir(&self.remote_ui_dir, "remote UI directory")?;
+        if let Some(path) = &self.ui_dist_path {
+            require_existing_dir(path, "Manager UI directory")?;
+            require_existing_file(&path.join("index.html"), "Manager UI index")?;
+        }
         if let Some(url) = &self.director_base_url {
             validate_plain_value(url, "Director base URL")?;
         }
@@ -189,6 +201,16 @@ where
             ))
         })?;
         self.upload_binary(&bytes, &request.remote_binary_path)?;
+
+        if let Some(ui_dist_path) = &request.ui_dist_path {
+            emit_manager_event(
+                sink,
+                "manager.upload-ui",
+                "Uploading Manager UI.",
+                StepAction::Upload,
+            );
+            self.upload_ui_dir(ui_dist_path, &request.remote_ui_dir)?;
+        }
 
         emit_manager_event(
             sink,
@@ -334,6 +356,32 @@ printf 'manager=%s\ninstalled=%s\nrunning=%s\nstate=%s\n' "$manager" "$installed
     }
 
     fn upload_binary(&self, bytes: &[u8], remote_path: &str) -> CommandResult<()> {
+        self.upload_file(bytes, remote_path, "0755")
+    }
+
+    fn upload_ui_dir(&self, local_dir: &Path, remote_dir: &str) -> CommandResult<()> {
+        let files = collect_ui_files(local_dir)?;
+        let prepare_script = format!(
+            "set -eu\nsudo rm -rf {}\nsudo install -d -m 0755 {}\n",
+            shell_quote(remote_dir),
+            shell_quote(remote_dir)
+        );
+        self.runner.run_script(&prepare_script)?;
+
+        for file in files {
+            let remote_path = remote_ui_file_path(remote_dir, &file.relative)?;
+            let bytes = fs::read(&file.absolute).map_err(|err| {
+                failure(format!(
+                    "Failed to read Manager UI file {}: {err}",
+                    file.absolute.display()
+                ))
+            })?;
+            self.upload_file(&bytes, &remote_path, "0644")?;
+        }
+        Ok(())
+    }
+
+    fn upload_file(&self, bytes: &[u8], remote_path: &str, mode: &str) -> CommandResult<()> {
         let setup_script = format!(
             "set -eu\nrm -f {} {}\ntouch {}\nchmod 600 {}\n",
             shell_quote(UPLOAD_B64_PATH),
@@ -356,9 +404,10 @@ printf 'manager=%s\ninstalled=%s\nrunning=%s\nstate=%s\n' "$manager" "$installed
         }
 
         let finalize_script = format!(
-            "set -eu\nbase64 -d {} > {}\nsudo install -D -m 0755 {} {}\nrm -f {} {}\n",
+            "set -eu\nbase64 -d {} > {}\nsudo install -D -m {} {} {}\nrm -f {} {}\n",
             shell_quote(UPLOAD_B64_PATH),
             shell_quote(UPLOAD_BIN_PATH),
+            shell_quote(mode),
             shell_quote(UPLOAD_BIN_PATH),
             shell_quote(remote_path),
             shell_quote(UPLOAD_B64_PATH),
@@ -375,6 +424,7 @@ printf 'manager=%s\ninstalled=%s\nrunning=%s\nstate=%s\n' "$manager" "$installed
         env.push_str(&env_assignment("PORT", &request.port.to_string()));
         env.push_str(&env_assignment("RUST_LOG", "dune_manager_api=info"));
         env.push_str(&env_assignment("KUBECONFIG", &request.kubeconfig_path));
+        env.push_str(&env_assignment("MANAGER_UI_DIR", &request.remote_ui_dir));
         if let Some(url) = &request.director_base_url {
             env.push_str(&env_assignment("DIRECTOR_BASE_URL", url));
         }
@@ -396,7 +446,7 @@ description="Authenticated control plane for the Dune dedicated server"
 
 if [ -f {env_path} ]; then
     . {env_path}
-    export MANAGER_API_TOKEN DUNE_NAMESPACE DIRECTOR_BASE_URL PORT RUST_LOG KUBECONFIG
+    export MANAGER_API_TOKEN DUNE_NAMESPACE DIRECTOR_BASE_URL PORT RUST_LOG KUBECONFIG MANAGER_UI_DIR
 fi
 
 command={binary_path}
@@ -563,12 +613,118 @@ fn require_existing_file(path: &Path, label: &str) -> CommandResult<()> {
     Ok(())
 }
 
+fn require_existing_dir(path: &Path, label: &str) -> CommandResult<()> {
+    if !path.is_dir() {
+        return Err(failure(format!(
+            "{label} was not found: {}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
 fn validate_absolute_remote_path(value: &str, label: &str) -> CommandResult<()> {
     validate_plain_value(value, label)?;
     if !value.starts_with('/') {
         return Err(failure(format!("{label} must be an absolute guest path")));
     }
     Ok(())
+}
+
+fn validate_absolute_remote_dir(value: &str, label: &str) -> CommandResult<()> {
+    validate_absolute_remote_path(value, label)?;
+    let trimmed = value.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err(failure(format!("{label} cannot be the filesystem root")));
+    }
+    if trimmed
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .any(|segment| segment == "." || segment == "..")
+    {
+        return Err(failure(format!("{label} contains an unsafe path segment")));
+    }
+    Ok(())
+}
+
+struct UiFile {
+    absolute: PathBuf,
+    relative: PathBuf,
+}
+
+fn collect_ui_files(root: &Path) -> CommandResult<Vec<UiFile>> {
+    let mut files = Vec::new();
+    collect_ui_files_inner(root, root, &mut files)?;
+    files.sort_by(|left, right| left.relative.cmp(&right.relative));
+    Ok(files)
+}
+
+fn collect_ui_files_inner(
+    root: &Path,
+    current: &Path,
+    files: &mut Vec<UiFile>,
+) -> CommandResult<()> {
+    for entry in fs::read_dir(current).map_err(|err| {
+        failure(format!(
+            "Failed to read Manager UI directory {}: {err}",
+            current.display()
+        ))
+    })? {
+        let entry =
+            entry.map_err(|err| failure(format!("Failed to read Manager UI entry: {err}")))?;
+        let path = entry.path();
+        let metadata = entry.metadata().map_err(|err| {
+            failure(format!(
+                "Failed to inspect Manager UI file {}: {err}",
+                path.display()
+            ))
+        })?;
+        if metadata.is_dir() {
+            collect_ui_files_inner(root, &path, files)?;
+        } else if metadata.is_file() {
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|err| {
+                    failure(format!(
+                        "Failed to resolve Manager UI relative path {}: {err}",
+                        path.display()
+                    ))
+                })?
+                .to_path_buf();
+            files.push(UiFile {
+                absolute: path,
+                relative,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn remote_ui_file_path(remote_dir: &str, relative: &Path) -> CommandResult<String> {
+    let mut path = remote_dir.trim_end_matches('/').to_string();
+    for component in relative.components() {
+        let Component::Normal(segment) = component else {
+            return Err(failure(format!(
+                "Manager UI path contains unsupported component: {}",
+                relative.display()
+            )));
+        };
+        let segment = segment.to_str().ok_or_else(|| {
+            failure(format!(
+                "Manager UI path is not valid UTF-8: {}",
+                relative.display()
+            ))
+        })?;
+        if segment.is_empty() || segment == "." || segment == ".." {
+            return Err(failure(format!(
+                "Manager UI path contains unsafe segment: {}",
+                relative.display()
+            )));
+        }
+        path.push('/');
+        path.push_str(segment);
+    }
+    Ok(path)
 }
 
 fn health_url(port: u16) -> String {
@@ -697,6 +853,55 @@ mod tests {
     }
 
     #[test]
+    fn installs_static_ui_when_dist_path_is_provided() {
+        let binary = test_file("manager-api-with-ui", b"test-binary");
+        let ui_dir = test_dir("manager-ui");
+        fs::write(ui_dir.join("index.html"), "<main>Adain</main>").unwrap();
+        fs::create_dir(ui_dir.join("assets")).unwrap();
+        fs::write(
+            ui_dir.join("assets").join("app.js"),
+            b"console.log('ready');",
+        )
+        .unwrap();
+        let remote = MockRemote::with_outputs([
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            r#"{"ok":true}"#,
+        ]);
+        let scripts = remote.scripts.clone();
+        let installer = ManagerApiInstaller::new(remote);
+        let mut request =
+            ManagerApiInstallRequest::new(&binary, "manager-token-secret", "funcom-seabass-test");
+        request.ui_dist_path = Some(ui_dir.clone());
+        let mut sink = VecOperationSink::default();
+
+        installer.install(&request, &mut sink).unwrap();
+        let joined_scripts = scripts.borrow().join("\n");
+
+        assert!(joined_scripts.contains("MANAGER_UI_DIR='/opt/dune-manager/manager-ui'"));
+        assert!(joined_scripts.contains("sudo rm -rf '/opt/dune-manager/manager-ui'"));
+        assert!(joined_scripts.contains("'/opt/dune-manager/manager-ui/index.html'"));
+        assert!(joined_scripts.contains("'/opt/dune-manager/manager-ui/assets/app.js'"));
+        assert!(sink
+            .events
+            .iter()
+            .any(|event| event.step_id == "manager.upload-ui"));
+        let _ = fs::remove_file(binary);
+        let _ = fs::remove_dir_all(ui_dir);
+    }
+
+    #[test]
     fn status_reports_reachable_when_health_has_a_body() {
         let remote = MockRemote::with_outputs([r#"{"ok":true}"#]);
         let status = ManagerApiInstaller::new(remote).status(8787).unwrap();
@@ -730,6 +935,17 @@ mod tests {
             .as_nanos();
         path.push(format!("dune-manager-{name}-{nanos}"));
         fs::write(&path, contents).unwrap();
+        path
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("dune-manager-{name}-{nanos}"));
+        fs::create_dir(&path).unwrap();
         path
     }
 }

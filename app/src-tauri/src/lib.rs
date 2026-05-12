@@ -317,7 +317,8 @@ async fn start_full_setup(
         let mut sink = TauriOperationSink { app: worker_app };
         sink.info("setup", "Starting full setup workflow.");
         let manager_api_binary = bundled_manager_api_binary(&sink.app);
-        match run_full_setup(request, manager_api_binary, &mut sink) {
+        let manager_ui_dir = bundled_manager_ui_dir(&sink.app);
+        match run_full_setup(request, manager_api_binary, manager_ui_dir, &mut sink) {
             Ok(result) => {
                 sink.info("setup", "Full setup workflow completed.");
                 Ok(result)
@@ -533,7 +534,8 @@ async fn start_remote_ubuntu_setup(
             "Remote Ubuntu setup can modify packages, users, k3s, firewall state, and server files on the target host.",
         );
         let manager_api_binary = bundled_manager_api_binary(&sink.app);
-        match run_remote_ubuntu_setup(request, manager_api_binary, &mut sink) {
+        let manager_ui_dir = bundled_manager_ui_dir(&sink.app);
+        match run_remote_ubuntu_setup(request, manager_api_binary, manager_ui_dir, &mut sink) {
             Ok(result) => {
                 sink.info("ubuntu", "Remote Ubuntu setup completed.");
                 Ok(result)
@@ -631,6 +633,7 @@ fn rollback_setup_inner(
 fn run_full_setup(
     request: SetupRequest,
     manager_api_binary: Option<PathBuf>,
+    manager_ui_dir: Option<PathBuf>,
     sink: &mut TauriOperationSink,
 ) -> CommandResult<SetupRunResult> {
     let toolchain = Toolchain::from_default_root()?;
@@ -772,11 +775,12 @@ fn run_full_setup(
         "manager-api",
         "Installing Manager API with the Self-Host Service Token.",
     );
-    let manager_request = ManagerApiInstallRequest::new(
+    let mut manager_request = ManagerApiInstallRequest::new(
         binary_path,
         request.self_host_token.trim().to_string(),
         result.bootstrap.namespace.clone(),
     );
+    manager_request.ui_dist_path = manager_ui_dir;
     ManagerApiInstaller::new(bootstrap_runner).install(&manager_request, sink)?;
     sink.info("manager-api", "Manager API installed and healthy.");
 
@@ -791,6 +795,7 @@ fn run_full_setup(
 fn run_remote_ubuntu_setup(
     request: RemoteSetupRequest,
     manager_api_binary: Option<PathBuf>,
+    manager_ui_dir: Option<PathBuf>,
     sink: &mut TauriOperationSink,
 ) -> CommandResult<RemoteSetupRunResult> {
     let toolchain = Toolchain::from_default_root()?;
@@ -910,6 +915,7 @@ fn run_remote_ubuntu_setup(
         created.namespace.clone(),
     );
     manager_request.service_manager = ManagerApiServiceManager::Systemd;
+    manager_request.ui_dist_path = manager_ui_dir;
     ManagerApiInstaller::new(runner.clone()).install(&manager_request, sink)?;
     sink.info("manager-api", "Manager API installed and healthy.");
 
@@ -1192,6 +1198,21 @@ fn bundled_manager_api_binary(app: &tauri::AppHandle) -> Option<PathBuf> {
     ];
 
     candidates.into_iter().flatten().find(|path| path.is_file())
+}
+
+fn bundled_manager_ui_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(path) = app.path().resolve("manager-ui", BaseDirectory::Resource) {
+        candidates.push(path);
+    }
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join("..").join("manager-ui").join("dist"));
+        candidates.push(current_dir.join("manager-ui").join("dist"));
+    }
+
+    candidates
+        .into_iter()
+        .find(|path| path.join("index.html").is_file())
 }
 
 fn apply_instance_layout<R>(
