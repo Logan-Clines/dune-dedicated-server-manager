@@ -287,6 +287,25 @@ header,
   border-top: 1px solid rgba(214, 187, 133, 0.16);
 }
 
+.api-console {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(214, 187, 133, 0.16);
+}
+
+.api-console-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+  margin: 0.85rem 0;
+}
+
+.api-console textarea {
+  min-height: 180px;
+  max-height: 420px;
+}
+
 .backup-panel {
   margin: 1rem 0;
   padding: 0.85rem;

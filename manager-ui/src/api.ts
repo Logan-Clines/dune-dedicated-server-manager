@@ -66,6 +66,17 @@ export type DirectorPlayerLists = {
   queued: string[];
 };
 
+export type DirectorPathCapability = {
+  method: string;
+  path: string;
+};
+
+export type DirectorCapabilities = {
+  configured: boolean;
+  apiPaths: DirectorPathCapability[];
+  uiProxyPath: string;
+};
+
 export type DirectorMap = {
   name: string;
   kind: string;

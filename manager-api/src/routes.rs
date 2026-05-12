@@ -818,7 +818,7 @@ async fn director_api_proxy(
     OriginalUri(uri): OriginalUri,
     method: Method,
     body: Bytes,
-) -> Result<Response, ApiError> {
+) -> ApiResponse<Value> {
     authorize(&state, &headers, query_token(uri.query()))?;
     let director_path = format!("/v0/{path}");
     if !is_allowed_director_api(method.as_str(), &director_path) {
@@ -826,13 +826,18 @@ async fn director_api_proxy(
             "Director API path is not allowlisted",
         ));
     }
-    proxy_director_response(
+    if method != Method::GET {
+        audit_action(
+            "director.proxy",
+            Some(&format!("{} {}", method.as_str(), director_path)),
+        );
+    }
+    proxy_director_json(
         &state,
         method,
         &director_path,
         director_query(uri.query()),
         body,
-        None,
     )
     .await
 }
@@ -851,6 +856,12 @@ async fn director_root_api_proxy(
         return Err(ApiError::bad_request(
             "Director API path is not allowlisted",
         ));
+    }
+    if method != Method::GET {
+        audit_action(
+            "director.proxy",
+            Some(&format!("{} {}", method.as_str(), director_path)),
+        );
     }
     proxy_director_response(
         &state,

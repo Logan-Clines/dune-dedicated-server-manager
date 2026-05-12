@@ -5,7 +5,9 @@
   import {
     ApiError,
     api,
+    type DirectorCapabilities,
     type DirectorMapConfigDetail,
+    type DirectorPathCapability,
     type DirectorPlayerLists,
     type IniSection,
     type LogsResponse,
@@ -65,8 +67,13 @@
   let selectedDirectorMap = "";
   let directorMapDetail: DirectorMapConfigDetail | null = null;
   let directorMapDraft = "";
+  let directorCapabilities: DirectorCapabilities | null = null;
+  let directorApiSelection = "";
+  let directorApiBody = "{}";
+  let directorApiResult = "";
   let directorNotice = "";
   let directorBusy = false;
+  let directorApiBusy = false;
   let telemetrySocket: WebSocket | null = null;
   let telemetryConnected = false;
   let telemetrySnapshots = 0;
@@ -560,12 +567,56 @@
       ]);
       directorFlsDraft = formatJson(fls);
       directorTransferDraft = formatJson(transfer);
+      if (!directorCapabilities) await loadDirectorCapabilities(false);
       const mapName = selectedDirectorMap || overview?.maps[0]?.name;
       if (mapName) await loadDirectorMapOverride(mapName, false);
     } catch (err) {
       error = message(err);
     } finally {
       directorBusy = false;
+    }
+  }
+
+  async function loadDirectorCapabilities(manageBusy = true) {
+    if (manageBusy) directorApiBusy = true;
+    error = "";
+    try {
+      directorCapabilities = await api<DirectorCapabilities>("/api/director/capabilities");
+      if (!directorApiSelection) {
+        const preferred =
+          directorCapabilities.apiPaths.find((item) => item.method === "GET" && item.path === "/v0/players/online") ??
+          directorCapabilities.apiPaths.find((item) => item.method === "GET") ??
+          directorCapabilities.apiPaths[0];
+        if (preferred) directorApiSelection = capabilityKey(preferred);
+      }
+    } catch (err) {
+      error = message(err);
+    } finally {
+      if (manageBusy) directorApiBusy = false;
+    }
+  }
+
+  async function runDirectorApiCall() {
+    const capability = selectedDirectorCapability();
+    if (!capability) return;
+    if (capability.method !== "GET" && !window.confirm("Run this Director write operation?")) return;
+    directorApiBusy = true;
+    directorApiResult = "";
+    error = "";
+    try {
+      const proxyPath = `/api/director${capability.path}`;
+      const init: RequestInit =
+        capability.method === "GET"
+          ? {}
+          : {
+              method: capability.method,
+              body: JSON.stringify(parseJsonDraft(directorApiBody || "{}")),
+            };
+      directorApiResult = formatJson(await api<unknown>(proxyPath, init));
+    } catch (err) {
+      error = message(err);
+    } finally {
+      directorApiBusy = false;
     }
   }
 
@@ -686,6 +737,14 @@
     if (!value) return "Unknown time";
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  }
+
+  function capabilityKey(value: DirectorPathCapability) {
+    return `${value.method} ${value.path}`;
+  }
+
+  function selectedDirectorCapability() {
+    return directorCapabilities?.apiPaths.find((item) => capabilityKey(item) === directorApiSelection) ?? null;
   }
 </script>
 
@@ -1028,6 +1087,47 @@
               </details>
             {:else}
               <p class="muted">Load a map to edit its Director override payload.</p>
+            {/if}
+          </section>
+          <section class="api-console">
+            <div class="editor-title">
+              <div>
+                <h3>Director API Console</h3>
+                <p class="muted">Run allowlisted Director calls through the authenticated Manager API proxy.</p>
+              </div>
+              <button disabled={directorApiBusy} on:click={() => loadDirectorCapabilities()}>
+                {directorApiBusy ? "Working..." : "Load paths"}
+              </button>
+            </div>
+            {#if directorCapabilities}
+              <div class="rows compact">
+                <div class="row"><span>Director</span><b>{directorCapabilities.configured ? "Reachable" : "Unavailable"}</b></div>
+                <div class="row"><span>Allowlisted paths</span><b>{directorCapabilities.apiPaths.length}</b></div>
+              </div>
+              <div class="api-console-grid">
+                <label>
+                  Path
+                  <select bind:value={directorApiSelection}>
+                    {#each directorCapabilities.apiPaths as item}
+                      <option value={capabilityKey(item)}>{capabilityKey(item)}</option>
+                    {/each}
+                  </select>
+                </label>
+                <button disabled={directorApiBusy || !selectedDirectorCapability()} on:click={runDirectorApiCall}>
+                  {directorApiBusy ? "Running..." : "Run"}
+                </button>
+              </div>
+              {#if selectedDirectorCapability()?.method !== "GET"}
+                <label>
+                  JSON body
+                  <textarea bind:value={directorApiBody} spellcheck="false"></textarea>
+                </label>
+              {/if}
+              {#if directorApiResult}
+                <textarea readonly value={directorApiResult} spellcheck="false"></textarea>
+              {/if}
+            {:else}
+              <p class="muted">Load paths to inspect the current Director proxy coverage.</p>
             {/if}
           </section>
         </section>
