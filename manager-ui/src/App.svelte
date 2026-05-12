@@ -8,6 +8,7 @@
     type BattlegroupSummary,
     type DatabaseMaintenanceItem,
     type DatabaseMaintenanceResponse,
+    type DatabasePlayerStatisticsResponse,
     type DatabasePlayerSummary,
     type DatabasePlayersResponse,
     type DatabaseWorldPartition,
@@ -143,6 +144,8 @@
   let playerFilter = "";
   let databasePlayers: DatabasePlayersResponse | null = null;
   let databasePlayersBusy = false;
+  let playerStatistics: DatabasePlayerStatisticsResponse | null = null;
+  let playerStatisticsBusy = false;
   let workloadFilter = "";
   let events: EventSummary[] = [];
   let eventsBusy = false;
@@ -264,6 +267,9 @@
     if (nextPage === "players" && !databasePlayers && !databasePlayersBusy) {
       void loadDatabasePlayers(false);
     }
+    if ((nextPage === "dashboard" || nextPage === "players") && !playerStatistics && !playerStatisticsBusy) {
+      void loadPlayerStatistics(false);
+    }
   }
 
   async function signIn() {
@@ -309,6 +315,7 @@
       }
       if (!settingsCatalog) settingsCatalog = await api<UserSettingsCatalog>("/api/config/user-settings");
       if (!databaseMaintenance) void loadDatabaseMaintenance(false);
+      if (!playerStatistics) void loadPlayerStatistics(false);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         session = null;
@@ -569,6 +576,18 @@
       if (showError) error = message(err);
     } finally {
       databasePlayersBusy = false;
+    }
+  }
+
+  async function loadPlayerStatistics(showError = true) {
+    playerStatisticsBusy = true;
+    if (showError) error = "";
+    try {
+      playerStatistics = await api<DatabasePlayerStatisticsResponse>("/api/database/player-statistics");
+    } catch (err) {
+      if (showError) error = message(err);
+    } finally {
+      playerStatisticsBusy = false;
     }
   }
 
@@ -1567,6 +1586,8 @@
               <div><span>Online</span><b>{overview?.players?.online ?? 0}</b></div>
               <div><span>Traveling</span><b>{overview?.players?.inTransit ?? 0}</b></div>
               <div><span>Queued</span><b>{overview?.players?.queued ?? 0}</b></div>
+              <div><span>Characters</span><b>{playerStatistics?.statistics.totalPlayers ?? "..."}</b></div>
+              <div><span>Guilds</span><b>{playerStatistics?.statistics.guilds ?? "..."}</b></div>
             </div>
           </section>
         </section>
@@ -2342,6 +2363,57 @@
           <Card label="Queued" value={`${overview?.players?.queued ?? 0}`} />
           <Card label="Travel" value={`${overview?.players?.inTransit ?? 0}`} />
         </div>
+        <section class="panel player-stats-panel">
+          <div class="split-heading">
+            <div>
+              <h2>Player Statistics</h2>
+              <p class="muted">Controlled database statistics for characters, accounts, guilds, tags, and recent logins.</p>
+            </div>
+            <button disabled={playerStatisticsBusy} on:click={() => loadPlayerStatistics()}>
+              {playerStatisticsBusy ? "Loading..." : playerStatistics ? "Refresh statistics" : "Load statistics"}
+            </button>
+          </div>
+          {#if playerStatistics}
+            <div class="stats-strip">
+              <div><span>Characters</span><b>{playerStatistics.statistics.totalPlayers}</b></div>
+              <div><span>Accounts</span><b>{playerStatistics.statistics.totalAccounts}</b></div>
+              <div><span>Guilds</span><b>{playerStatistics.statistics.guilds}</b></div>
+              <div><span>Guild members</span><b>{playerStatistics.statistics.guildMembers}</b></div>
+              <div><span>Tagged players</span><b>{playerStatistics.statistics.taggedPlayers}</b></div>
+            </div>
+            <div class="stats-columns">
+              <div>
+                <h3>Online states</h3>
+                <div class="rows compact">
+                  {#each playerStatistics.statistics.onlineStatuses as item}
+                    <div class="row"><span>{item.name}</span><b>{item.count}</b></div>
+                  {/each}
+                  {#if !playerStatistics.statistics.onlineStatuses.length}<p class="muted">No player state rows yet.</p>{/if}
+                </div>
+              </div>
+              <div>
+                <h3>Life states</h3>
+                <div class="rows compact">
+                  {#each playerStatistics.statistics.lifeStates as item}
+                    <div class="row"><span>{item.name}</span><b>{item.count}</b></div>
+                  {/each}
+                  {#if !playerStatistics.statistics.lifeStates.length}<p class="muted">No player state rows yet.</p>{/if}
+                </div>
+              </div>
+              <div>
+                <h3>Recent logins</h3>
+                <div class="rows compact">
+                  {#each playerStatistics.statistics.recentPlayers as player}
+                    <div class="row"><span>{player.characterName || `Account ${player.accountId}`}</span><b>{formatEventTime(player.lastLoginTime)}</b></div>
+                  {/each}
+                  {#if !playerStatistics.statistics.recentPlayers.length}<p class="muted">No recent login records yet.</p>{/if}
+                </div>
+              </div>
+            </div>
+          {:else}
+            <p class="muted">Loading player statistics from controlled database queries.</p>
+          {/if}
+        </section>
         <section class="panel player-directory-panel">
           <div class="split-heading">
             <div>

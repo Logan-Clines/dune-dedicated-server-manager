@@ -163,6 +163,34 @@ export type DatabasePlayersResponse = {
   rows: DatabasePlayerSummary[];
 };
 
+export type DatabaseNamedCount = {
+  name: string;
+  count: number;
+};
+
+export type DatabaseRecentPlayer = {
+  accountId: number;
+  characterName?: string;
+  onlineStatus?: string;
+  lastLoginTime?: string;
+};
+
+export type DatabasePlayerStatistics = {
+  totalAccounts: number;
+  totalPlayers: number;
+  guilds: number;
+  guildMembers: number;
+  taggedPlayers: number;
+  onlineStatuses: DatabaseNamedCount[];
+  lifeStates: DatabaseNamedCount[];
+  recentPlayers: DatabaseRecentPlayer[];
+};
+
+export type DatabasePlayerStatisticsResponse = {
+  namespace: string;
+  statistics: DatabasePlayerStatistics;
+};
+
 export type PlayerSummary = {
   active: number;
   online: number;

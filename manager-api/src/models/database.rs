@@ -58,3 +58,39 @@ pub struct DatabasePlayersResponse {
     pub namespace: String,
     pub rows: Vec<DatabasePlayerSummary>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct DatabaseNamedCount {
+    pub name: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct DatabaseRecentPlayer {
+    pub account_id: i64,
+    pub character_name: Option<String>,
+    pub online_status: Option<String>,
+    pub last_login_time: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct DatabasePlayerStatistics {
+    pub total_accounts: i64,
+    pub total_players: i64,
+    pub guilds: i64,
+    pub guild_members: i64,
+    pub tagged_players: i64,
+    pub online_statuses: Vec<DatabaseNamedCount>,
+    pub life_states: Vec<DatabaseNamedCount>,
+    pub recent_players: Vec<DatabaseRecentPlayer>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabasePlayerStatisticsResponse {
+    pub namespace: String,
+    pub statistics: DatabasePlayerStatistics,
+}

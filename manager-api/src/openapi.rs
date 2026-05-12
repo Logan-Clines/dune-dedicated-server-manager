@@ -224,6 +224,12 @@ pub fn document() -> Value {
                     "responses": { "200": { "description": "Player directory rows" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
                 }
             },
+            "/api/database/player-statistics": {
+                "get": {
+                    "summary": "Read controlled player and guild statistics from the game database",
+                    "responses": { "200": { "description": "Player and guild statistics" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+                }
+            },
             "/api/database-maintenance": {
                 "get": {
                     "summary": "List database backup, restore, migration, schedule, and operation resources",

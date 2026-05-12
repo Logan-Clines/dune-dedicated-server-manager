@@ -95,6 +95,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             axum::routing::patch(update_database_world_partition),
         )
         .route("/api/database/players", get(database_players))
+        .route(
+            "/api/database/player-statistics",
+            get(database_player_statistics_route),
+        )
         .route("/api/database-maintenance", get(database_maintenance))
         .route(
             "/api/database-maintenance/backups",
@@ -652,6 +656,17 @@ async fn database_players(
     Ok(Json(DatabasePlayersResponse {
         namespace: state.namespace.clone(),
         rows: list_database_players(&state).await?,
+    }))
+}
+
+async fn database_player_statistics_route(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> ApiResponse<DatabasePlayerStatisticsResponse> {
+    authorize(&state, &headers, None)?;
+    Ok(Json(DatabasePlayerStatisticsResponse {
+        namespace: state.namespace.clone(),
+        statistics: database_player_statistics(&state).await?,
     }))
 }
 

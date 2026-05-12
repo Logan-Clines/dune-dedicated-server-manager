@@ -8,7 +8,10 @@ use tokio::io::AsyncReadExt;
 
 use crate::{
     errors::ApiError,
-    models::{DatabasePlayerSummary, DatabaseWorldPartition, DatabaseWorldPartitionUpdateRequest},
+    models::{
+        DatabasePlayerStatistics, DatabasePlayerSummary, DatabaseWorldPartition,
+        DatabaseWorldPartitionUpdateRequest,
+    },
     state::AppState,
 };
 
@@ -16,6 +19,7 @@ const WORLD_PARTITIONS_QUERY: &str = "select coalesce(json_agg(t), '[]'::json) f
 const WORLD_PARTITION_SELECT: &str =
     "partition_id, server_id, map, partition_definition::text as partition_definition, dimension_index, blocked, label";
 const PLAYER_DIRECTORY_QUERY: &str = "select coalesce(json_agg(t), '[]'::json) from (select ps.account_id, ps.character_name, ps.online_status::text as online_status, ps.life_state::text as life_state, ps.server_id, ps.player_controller_id, ps.player_state_id, ps.previous_server_partition_id, ps.home_dimension_index, ps.last_login_time::text as last_login_time, ps.last_avatar_activity::text as last_avatar_activity, g.guild_id, g.guild_name, coalesce(tags.tags, '[]'::json) as tags from dune.player_state ps left join dune.guild_members gm on gm.player_id = ps.player_state_id left join dune.guilds g on g.guild_id = gm.guild_id left join lateral (select json_agg(pt.tag order by pt.tag) as tags from dune.player_tags pt where pt.account_id = ps.account_id) tags on true order by ps.last_login_time desc nulls last, ps.character_name asc nulls last limit 500) t";
+const PLAYER_STATISTICS_QUERY: &str = "select json_build_object('total_accounts', (select count(*) from dune.accounts), 'total_players', (select count(*) from dune.player_state), 'guilds', (select count(*) from dune.guilds), 'guild_members', (select count(*) from dune.guild_members), 'tagged_players', (select count(distinct account_id) from dune.player_tags), 'online_statuses', (select coalesce(json_agg(s), '[]'::json) from (select coalesce(online_status::text, 'Unknown') as name, count(*) as count from dune.player_state group by 1 order by count desc, name asc) s), 'life_states', (select coalesce(json_agg(s), '[]'::json) from (select coalesce(life_state::text, 'Unknown') as name, count(*) as count from dune.player_state group by 1 order by count desc, name asc) s), 'recent_players', (select coalesce(json_agg(r), '[]'::json) from (select account_id, character_name, online_status::text as online_status, last_login_time::text as last_login_time from dune.player_state order by last_login_time desc nulls last, character_name asc nulls last limit 8) r))";
 
 pub async fn list_world_partitions(state: &AppState) -> Result<Vec<DatabaseWorldPartition>> {
     let stdout = exec_database_psql_json(state, WORLD_PARTITIONS_QUERY).await?;
@@ -29,6 +33,13 @@ pub async fn list_database_players(state: &AppState) -> Result<Vec<DatabasePlaye
 
     serde_json::from_str(stdout.trim())
         .with_context(|| "failed to parse database player directory output".to_string())
+}
+
+pub async fn database_player_statistics(state: &AppState) -> Result<DatabasePlayerStatistics> {
+    let stdout = exec_database_psql_json(state, PLAYER_STATISTICS_QUERY).await?;
+
+    serde_json::from_str(stdout.trim())
+        .with_context(|| "failed to parse database player statistics output".to_string())
 }
 
 pub async fn update_world_partition(
@@ -174,6 +185,18 @@ mod tests {
         assert_eq!(rows[0].character_name.as_deref(), Some("Siona"));
         assert_eq!(rows[0].guild_name.as_deref(), Some("Atreides"));
         assert_eq!(rows[0].tags, vec!["builder", "admin"]);
+    }
+
+    #[test]
+    fn parses_database_player_statistics() {
+        let json = r#"{"total_accounts":3,"total_players":2,"guilds":1,"guild_members":1,"tagged_players":1,"online_statuses":[{"name":"Online","count":1}],"life_states":[{"name":"Alive","count":2}],"recent_players":[{"account_id":42,"character_name":"Siona","online_status":"Online","last_login_time":"2026-05-12 10:00:00+00"}]}"#;
+
+        let statistics: DatabasePlayerStatistics = serde_json::from_str(json).unwrap();
+
+        assert_eq!(statistics.total_accounts, 3);
+        assert_eq!(statistics.total_players, 2);
+        assert_eq!(statistics.online_statuses[0].name, "Online");
+        assert_eq!(statistics.recent_players[0].account_id, 42);
     }
 
     #[test]
