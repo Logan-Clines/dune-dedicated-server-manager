@@ -32,3 +32,13 @@ pub struct LogExportError {
     pub container: Option<String>,
     pub message: String,
 }
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagerLogResponse {
+    pub path: &'static str,
+    pub available: bool,
+    pub truncated: bool,
+    pub tail_lines: usize,
+    pub lines: Vec<String>,
+}

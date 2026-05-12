@@ -88,6 +88,13 @@ pub fn document() -> Value {
                     "responses": { "200": { "description": "Manager process metadata" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
                 }
             },
+            "/api/manager/logs": {
+                "get": {
+                    "summary": "Read redacted Manager API service logs",
+                    "parameters": [{ "name": "tail", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 5000 } }],
+                    "responses": { "200": { "description": "Redacted Manager API log tail" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+                }
+            },
             "/api/battlegroups": {
                 "get": {
                     "summary": "List battlegroups",

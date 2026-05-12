@@ -682,6 +682,11 @@ header,
   line-height: 1.35;
 }
 
+.compact-log {
+  min-height: 12rem;
+  max-height: 22rem;
+}
+
 @media (max-width: 900px) {
   .shell {
     grid-template-columns: 1fr;

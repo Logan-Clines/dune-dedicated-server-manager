@@ -12,6 +12,8 @@
     type IniSection,
     type LogExportResponse,
     type LogsResponse,
+    type ManagerLogResponse,
+    type ManagerSelf,
     type Overview,
     type Session,
     type TelemetryEnvelope,
@@ -88,6 +90,9 @@
   let playersBusy = false;
   let playersFull = false;
   let workloadFilter = "";
+  let managerSelf: ManagerSelf | null = null;
+  let managerLogs: ManagerLogResponse | null = null;
+  let managerBusy = "";
 
   $: battlegroup = overview?.battlegroups[0] ?? null;
   $: pods = overview?.workloads.pods ?? [];
@@ -180,6 +185,8 @@
     settingsCatalog = null;
     settingsFile = null;
     settingsBackups = null;
+    managerSelf = null;
+    managerLogs = null;
   }
 
   async function refresh(showError = true) {
@@ -534,6 +541,30 @@
     }
   }
 
+  async function loadManagerSelf() {
+    managerBusy = "self";
+    error = "";
+    try {
+      managerSelf = await api<ManagerSelf>("/api/manager/self");
+    } catch (err) {
+      error = message(err);
+    } finally {
+      managerBusy = "";
+    }
+  }
+
+  async function loadManagerLogs() {
+    managerBusy = "logs";
+    error = "";
+    try {
+      managerLogs = await api<ManagerLogResponse>("/api/manager/logs?tail=180");
+    } catch (err) {
+      error = message(err);
+    } finally {
+      managerBusy = "";
+    }
+  }
+
   function updateSettingsEntry(line: number, value: string) {
     const lines = settingsDraft.split(/\r?\n/);
     const index = line - 1;
@@ -808,6 +839,14 @@
     if (!value) return "Unknown time";
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  }
+
+  function formatDuration(totalSeconds: number) {
+    const seconds = Math.max(0, Math.floor(totalSeconds));
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const rest = seconds % 60;
+    return `${hours}h ${minutes}m ${rest}s`;
   }
 
   function capabilityKey(value: DirectorPathCapability) {
@@ -1356,6 +1395,47 @@
           <h2>Settings</h2>
           <label>Display name <input bind:value={titleDraft} /></label>
           <button on:click={saveTitle}>Save name</button>
+        </section>
+        <section class="panel form">
+          <div class="split-heading">
+            <div>
+              <h2>Manager API</h2>
+              <p class="muted">Inspect the local control service that powers this web manager.</p>
+            </div>
+            <div class="actions">
+              <button disabled={!!managerBusy} on:click={loadManagerSelf}>
+                {managerBusy === "self" ? "Loading..." : "Load status"}
+              </button>
+              <button disabled={!!managerBusy} on:click={loadManagerLogs}>
+                {managerBusy === "logs" ? "Loading..." : "Load logs"}
+              </button>
+            </div>
+          </div>
+          {#if managerSelf}
+            <div class="rows compact">
+              <div class="row"><span>Service</span><b>{managerSelf.serviceName}</b></div>
+              <div class="row"><span>Version</span><b>{managerSelf.apiVersion}</b></div>
+              <div class="row"><span>Uptime</span><b>{formatDuration(managerSelf.uptimeSeconds)}</b></div>
+              <div class="row"><span>PID</span><b>{managerSelf.pid}</b></div>
+              <div class="row"><span>Port</span><b>{managerSelf.port}</b></div>
+              <div class="row"><span>Director</span><b>{managerSelf.directorConfigured ? "Reachable" : "Unavailable"}</b></div>
+              <div class="row"><span>Binary</span><b>{managerSelf.binaryPath}</b></div>
+              <div class="row"><span>Environment</span><b>{managerSelf.envPath}</b></div>
+              <div class="row"><span>Log</span><b>{managerSelf.logPath}</b></div>
+            </div>
+          {:else}
+            <p class="muted">Load Manager API status to inspect process paths, uptime, and service health.</p>
+          {/if}
+
+          {#if managerLogs}
+            <div class="split-heading">
+              <p class="muted">
+                {managerLogs.available ? `${managerLogs.lines.length} redacted log lines` : "Manager log file is not available yet."}
+                {managerLogs.truncated ? " Large log truncated before tailing." : ""}
+              </p>
+            </div>
+            <div class="logs compact-log">{#each managerLogs.lines as line}<div>{line}</div>{/each}</div>
+          {/if}
         </section>
       {/if}
     </section>

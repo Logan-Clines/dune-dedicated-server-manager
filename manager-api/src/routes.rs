@@ -15,7 +15,7 @@ use k8s_openapi::api::core::v1::Pod;
 use kube::{api::LogParams, Api};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{env, path::PathBuf, sync::Arc, time::Duration};
+use std::{env, io::ErrorKind, path::PathBuf, sync::Arc, time::Duration};
 use tokio::fs;
 use tokio::time;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -38,6 +38,8 @@ use crate::{
 };
 
 const MANAGER_API_VERSION: &str = env!("CARGO_PKG_VERSION");
+const MANAGER_LOG_PATH: &str = "/var/log/dune-manager-api.log";
+const MANAGER_LOG_MAX_BYTES: usize = 1024 * 1024;
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
@@ -48,6 +50,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/status", get(status))
         .route("/api/overview", get(overview))
         .route("/api/manager/self", get(manager_self))
+        .route("/api/manager/logs", get(manager_logs))
         .route("/api/battlegroups", get(battlegroups))
         .route(
             "/api/battlegroups/:namespace/:name",
@@ -303,7 +306,43 @@ async fn manager_self(
         service_name: "dune-manager-api",
         binary_path: "/opt/dune-manager/dune-manager-api",
         env_path: "/etc/dune-manager-api.env",
-        log_path: "/var/log/dune-manager-api.log",
+        log_path: MANAGER_LOG_PATH,
+    }))
+}
+
+async fn manager_logs(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<LogExportQuery>,
+) -> ApiResponse<ManagerLogResponse> {
+    authorize(&state, &headers, None)?;
+    let tail_lines = query.tail.unwrap_or(300).clamp(1, 5000) as usize;
+    let bytes = match fs::read(MANAGER_LOG_PATH).await {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            return Ok(Json(ManagerLogResponse {
+                path: MANAGER_LOG_PATH,
+                available: false,
+                truncated: false,
+                tail_lines,
+                lines: Vec::new(),
+            }));
+        }
+        Err(err) => return Err(err).context("failed to read Manager API log")?,
+    };
+    let truncated = bytes.len() > MANAGER_LOG_MAX_BYTES;
+    let slice = if truncated {
+        &bytes[bytes.len() - MANAGER_LOG_MAX_BYTES..]
+    } else {
+        &bytes
+    };
+    let text = String::from_utf8_lossy(slice);
+    Ok(Json(ManagerLogResponse {
+        path: MANAGER_LOG_PATH,
+        available: true,
+        truncated,
+        tail_lines,
+        lines: tail_text_lines(&redact_text(&text), tail_lines),
     }))
 }
 
@@ -1179,6 +1218,17 @@ fn content_type_for(path: &std::path::Path) -> &'static str {
     }
 }
 
+fn tail_text_lines(text: &str, tail_lines: usize) -> Vec<String> {
+    let mut lines = text
+        .lines()
+        .rev()
+        .take(tail_lines)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    lines.reverse();
+    lines
+}
+
 async fn telemetry_snapshot(state: &AppState) -> Result<Value> {
     let (battlegroups, pods, services) = tokio::try_join!(
         list_battlegroups(state),
@@ -1192,4 +1242,25 @@ async fn telemetry_snapshot(state: &AppState) -> Result<Value> {
         "pods": pods,
         "services": services
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tails_text_lines_in_original_order() {
+        assert_eq!(
+            tail_text_lines("one\ntwo\nthree\nfour\n", 2),
+            vec!["three".to_string(), "four".to_string()]
+        );
+    }
+
+    #[test]
+    fn tails_all_lines_when_limit_is_larger() {
+        assert_eq!(
+            tail_text_lines("one\ntwo", 20),
+            vec!["one".to_string(), "two".to_string()]
+        );
+    }
 }

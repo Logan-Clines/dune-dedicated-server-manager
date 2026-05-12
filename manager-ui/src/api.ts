@@ -128,6 +128,30 @@ export type Overview = {
   maps: DirectorMap[];
 };
 
+export type ManagerSelf = {
+  apiVersion: string;
+  startedUnixMs: number;
+  uptimeSeconds: number;
+  pid: number;
+  namespace: string;
+  port: number;
+  authEnabled: boolean;
+  directorConfigured: boolean;
+  currentExe: string;
+  serviceName: string;
+  binaryPath: string;
+  envPath: string;
+  logPath: string;
+};
+
+export type ManagerLogResponse = {
+  path: string;
+  available: boolean;
+  truncated: boolean;
+  tailLines: number;
+  lines: string[];
+};
+
 export type WorldLayout = {
   haggaBasinInstances: number;
   socialHubsEnabled: boolean;
