@@ -2536,8 +2536,8 @@
               </div>
             </div>
             <details class="advanced-ini">
-              <summary>Advanced raw INI view <span>{settingsFile.path}</span></summary>
-              <textarea bind:value={settingsDraft} on:input={markSettingsDraftChanged} spellcheck="false"></textarea>
+              <summary>Diagnostic INI preview <span>{settingsFile.path}</span></summary>
+              <textarea value={settingsDraft} spellcheck="false" readonly></textarea>
             </details>
             {#if settingsPreview}
               <section class="diff-panel">
