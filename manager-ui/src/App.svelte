@@ -2204,10 +2204,10 @@
                     {#if item.kind === "DatabaseBackup" && (item.identifier || item.name)}
                       <button
                         class="inline danger"
-                        disabled={databaseActionBusy || item.phase !== "Completed"}
+                        disabled={databaseActionBusy || item.phase !== "Completed" || !battlegroupStopped}
                         on:click={() => createDatabaseRestore(item)}
                       >
-                        Restore
+                        {battlegroupStopped ? "Restore" : "Stop server to restore"}
                       </button>
                     {/if}
                   </div>
