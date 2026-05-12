@@ -163,6 +163,7 @@
   let partitionLabelDrafts: Record<number, string> = {};
   let databaseActionBusy = false;
   let databaseFilter = "";
+  let layoutPartitionFilter = "";
   let databaseNotice = "";
   let managerSelf: ManagerSelf | null = null;
   let managerLogs: ManagerLogResponse | null = null;
@@ -180,7 +181,7 @@
   $: visibleEvents = filterEvents(events, workloadFilter);
   $: visibleStorageClaims = filterStorageClaims(storageClaims, storageFilter);
   $: visibleDatabaseItems = filterDatabaseMaintenance(databaseMaintenanceItems(databaseMaintenance), databaseFilter);
-  $: visibleWorldPartitions = filterWorldPartitions(databaseWorldPartitions?.rows ?? [], databaseFilter);
+  $: visibleWorldPartitions = filterWorldPartitions(databaseWorldPartitions?.rows ?? [], layoutPartitionFilter);
   $: layoutMemory = layout ? estimateLayoutMemory(layout) : null;
   $: layoutDeepDesertMode = layout
     ? layout.deepDesertPvpInstances > 0
@@ -257,6 +258,9 @@
     }
     if (nextPage === "database" && !databaseMaintenance && !databaseBusy) {
       void loadDatabaseMaintenance(false);
+    }
+    if (nextPage === "layout" && !databaseWorldPartitions && !databaseTablesBusy) {
+      void loadDatabaseWorldPartitions();
     }
     if (nextPage === "director" && !directorFlsDraft && !directorTransferDraft && !directorAutoLoading) {
       directorAutoLoading = true;
@@ -1801,7 +1805,7 @@
               <p class="muted">Manage backup readiness and inspect approved game database data without arbitrary table editing.</p>
             </div>
             <div class="actions">
-              <input bind:value={databaseFilter} placeholder="Filter backups or partitions" />
+              <input bind:value={databaseFilter} placeholder="Filter backup resources" />
               {#if databaseMaintenance && !databaseMaintenance.physicalBackupsEnabled}
                 <button disabled={databaseActionBusy || !battlegroup} on:click={enablePhysicalBackups}>
                   {databaseActionBusy ? "Enabling..." : "Enable backups"}
@@ -1833,62 +1837,6 @@
               <Card label="Operations" value={`${databaseMaintenance.operations.length + databaseMaintenance.migrations.length}`} />
             </div>
           {/if}
-          <section class="controlled-db-panel">
-            <div class="editor-title">
-              <div>
-                <h3>World partitions</h3>
-                <p class="muted">Controlled access to partition labels and open/blocked state. Raw SQL is never exposed.</p>
-              </div>
-              <button disabled={databaseTablesBusy} on:click={loadDatabaseWorldPartitions}>
-                {databaseTablesBusy ? "Loading..." : databaseWorldPartitions ? "Refresh" : "Load"}
-              </button>
-            </div>
-            {#if visibleWorldPartitions.length}
-              <div class="partition-list">
-                {#each visibleWorldPartitions as partition}
-                  <article>
-                    <div>
-                      <strong>{partition.map}</strong>
-                      <span>{partition.label || "No label"} · dimension {partition.dimensionIndex}</span>
-                    </div>
-                    <div class="partition-meta">
-                      <b>#{partition.partitionId}</b>
-                      <span>{partition.serverId || "No server"}</span>
-                      <em class:warning={partition.blocked}>{partition.blocked ? "Blocked" : "Open"}</em>
-                    </div>
-                    <div class="partition-controls">
-                      <input
-                        value={partitionLabelDrafts[partition.partitionId] ?? partition.label ?? ""}
-                        maxlength="80"
-                        placeholder="Operator label"
-                        on:input={(event) =>
-                          updatePartitionLabelDraft(partition.partitionId, event.currentTarget.value)}
-                      />
-                      <button
-                        class="inline"
-                        disabled={partitionSaving[partition.partitionId]}
-                        on:click={() => saveWorldPartition(partition)}
-                      >
-                        {partitionSaving[partition.partitionId] ? "Saving..." : "Save label"}
-                      </button>
-                      <button
-                        class:danger={!partition.blocked}
-                        class="inline"
-                        disabled={partitionSaving[partition.partitionId]}
-                        on:click={() => saveWorldPartition(partition, !partition.blocked)}
-                      >
-                        {partition.blocked ? "Open partition" : "Block partition"}
-                      </button>
-                    </div>
-                  </article>
-                {/each}
-              </div>
-            {:else if databaseWorldPartitions}
-              <p class="muted">No world partitions match the current filter.</p>
-            {:else}
-              <p class="muted">Load world partitions to inspect the game database through the controlled Manager API query.</p>
-            {/if}
-          </section>
           {#if visibleDatabaseItems.length}
             <div class="database-list">
               {#each visibleDatabaseItems as item}
@@ -2033,6 +1981,64 @@
                 <p>{warning}</p>
               {/each}
             </div>
+          {/if}
+        </section>
+        <section class="panel controlled-db-panel">
+          <div class="editor-title">
+            <div>
+              <h3>World partitions</h3>
+              <p class="muted">Controlled partition labels and open/blocked state for the current world layout. Raw SQL is never exposed.</p>
+            </div>
+            <div class="actions">
+              <input bind:value={layoutPartitionFilter} placeholder="Filter map, label, server, or partition" />
+              <button disabled={databaseTablesBusy} on:click={loadDatabaseWorldPartitions}>
+                {databaseTablesBusy ? "Loading..." : databaseWorldPartitions ? "Refresh partitions" : "Load partitions"}
+              </button>
+            </div>
+          </div>
+          {#if visibleWorldPartitions.length}
+            <div class="partition-list">
+              {#each visibleWorldPartitions as partition}
+                <article>
+                  <div>
+                    <strong>{partition.map}</strong>
+                    <span>{partition.label || "No label"} · dimension {partition.dimensionIndex}</span>
+                  </div>
+                  <div class="partition-meta">
+                    <b>#{partition.partitionId}</b>
+                    <span>{partition.serverId || "No server"}</span>
+                    <em class:warning={partition.blocked}>{partition.blocked ? "Blocked" : "Open"}</em>
+                  </div>
+                  <div class="partition-controls">
+                    <input
+                      value={partitionLabelDrafts[partition.partitionId] ?? partition.label ?? ""}
+                      maxlength="80"
+                      placeholder="Operator label"
+                      on:input={(event) => updatePartitionLabelDraft(partition.partitionId, event.currentTarget.value)}
+                    />
+                    <button
+                      class="inline"
+                      disabled={partitionSaving[partition.partitionId]}
+                      on:click={() => saveWorldPartition(partition)}
+                    >
+                      {partitionSaving[partition.partitionId] ? "Saving..." : "Save label"}
+                    </button>
+                    <button
+                      class:danger={!partition.blocked}
+                      class="inline"
+                      disabled={partitionSaving[partition.partitionId]}
+                      on:click={() => saveWorldPartition(partition, !partition.blocked)}
+                    >
+                      {partition.blocked ? "Open partition" : "Block partition"}
+                    </button>
+                  </div>
+                </article>
+              {/each}
+            </div>
+          {:else if databaseWorldPartitions}
+            <p class="muted">No world partitions match the current filter.</p>
+          {:else}
+            <p class="muted">Loading world partitions from the controlled Manager API query.</p>
           {/if}
         </section>
       {:else if page === "config"}
