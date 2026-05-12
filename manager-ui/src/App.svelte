@@ -92,7 +92,7 @@
     { page: "database", label: "Backups" },
     { page: "battlegroup", label: "Server Control" },
     { page: "workloads", label: "Server Health" },
-    { page: "storage", label: "Storage" },
+    { page: "storage", label: "Data Storage" },
     { page: "logs", label: "Logs" },
     { page: "settings", label: "Manager" },
   ];
@@ -285,6 +285,9 @@
     }
     if (nextPage === "workloads" && !events.length && !eventsBusy) {
       void loadEvents();
+    }
+    if (nextPage === "storage" && !storageClaims.length && !storageBusy) {
+      void loadStorage(false);
     }
     if (nextPage === "director" && !directorFlsDraft && !directorTransferDraft && !directorAutoLoading) {
       directorAutoLoading = true;
@@ -693,14 +696,14 @@
     }
   }
 
-  async function loadStorage() {
+  async function loadStorage(showError = true) {
     storageBusy = true;
-    error = "";
+    if (showError) error = "";
     try {
       const result = await api<StorageResponse>("/api/storage");
       storageClaims = result.claims;
     } catch (err) {
-      error = message(err);
+      if (showError) error = message(err);
     } finally {
       storageBusy = false;
     }
@@ -1915,15 +1918,33 @@
         <section class="panel form">
           <div class="split-heading">
             <div>
-              <h2>Storage</h2>
-              <p class="muted">Inspect persistent volume claims used by database, queues, and runtime services.</p>
+              <p class="eyebrow">Persistence</p>
+              <h2>Data Storage</h2>
+              <p class="muted">Check database, queue, and runtime storage volumes before changing the server or troubleshooting data issues.</p>
             </div>
             <div class="actions">
-              <input bind:value={storageFilter} placeholder="Filter claims" />
+              <input bind:value={storageFilter} placeholder="Filter volume, phase, class, or size" />
               <button disabled={storageBusy} on:click={loadStorage}>
-                {storageBusy ? "Loading..." : storageClaims.length ? "Refresh" : "Load storage"}
+                {storageBusy ? "Loading..." : storageClaims.length ? "Refresh storage" : "Load storage"}
               </button>
             </div>
+          </div>
+          <div class="storage-summary">
+            <article>
+              <span>Total volumes</span>
+              <strong>{storageClaims.length}</strong>
+              <p>Tracked persistent storage claims.</p>
+            </article>
+            <article class:good={storageClaims.length > 0 && storageClaims.every((claim) => claim.phase === "Bound")} class:warning={storageClaims.some((claim) => claim.phase !== "Bound")}>
+              <span>Bound volumes</span>
+              <strong>{storageClaims.filter((claim) => claim.phase === "Bound").length}/{storageClaims.length || 0}</strong>
+              <p>{storageClaims.some((claim) => claim.phase !== "Bound") ? "One or more volumes need attention." : "Storage claims look bound."}</p>
+            </article>
+            <article>
+              <span>Database backups</span>
+              <strong>{databaseMaintenance?.backupsReady ? "Ready" : "Check setup"}</strong>
+              <p>{databaseMaintenance?.backupsReady ? "Backup storage is configured." : "Open Backups for readiness details."}</p>
+            </article>
           </div>
           {#if visibleStorageClaims.length}
             <div class="storage-grid">
@@ -1946,7 +1967,7 @@
               {/each}
             </div>
           {:else}
-            <p class="muted">Load storage to inspect PVC capacity and binding state. The filter applies after loading.</p>
+            <p class="muted">Storage loads automatically when this page opens. The filter applies after loading.</p>
           {/if}
         </section>
       {:else if page === "database"}

@@ -1215,6 +1215,50 @@ header,
   gap: 0.85rem;
 }
 
+.storage-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.storage-summary article {
+  min-height: 7rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(214, 187, 133, 0.13);
+  border-radius: 8px;
+  background: rgba(8, 7, 6, 0.3);
+}
+
+.storage-summary span,
+.storage-summary strong {
+  display: block;
+}
+
+.storage-summary span {
+  color: #b9aa91;
+  font-size: 0.78rem;
+}
+
+.storage-summary strong {
+  margin-top: 0.25rem;
+  color: #f2d492;
+  font-size: 1.18rem;
+}
+
+.storage-summary p {
+  margin: 0.55rem 0 0;
+  color: #d9d1c4;
+  font-size: 0.86rem;
+}
+
+.storage-summary article.good {
+  background: rgba(44, 92, 57, 0.2);
+}
+
+.storage-summary article.warning {
+  background: rgba(105, 78, 29, 0.28);
+}
+
 .storage-card {
   display: grid;
   gap: 0.75rem;
@@ -1844,6 +1888,7 @@ header,
   .workload-grid,
   .workload-card,
   .event-list article,
+  .storage-summary,
   .storage-grid,
   .database-ribbon,
   .backup-readiness,
