@@ -1801,8 +1801,8 @@
         <section class="panel form">
           <div class="split-heading">
             <div>
-              <h2>Backups and Database</h2>
-              <p class="muted">Manage backup readiness and inspect approved game database data without arbitrary table editing.</p>
+              <h2>Backups</h2>
+              <p class="muted">Check backup readiness, request manual database backups, and review operator backup activity.</p>
             </div>
             <div class="actions">
               <input bind:value={databaseFilter} placeholder="Filter backup resources" />
@@ -1818,7 +1818,7 @@
                 {databaseActionBusy ? "Requesting..." : "Create backup"}
               </button>
               <button disabled={databaseBusy} on:click={loadDatabaseMaintenance}>
-                {databaseBusy ? "Loading..." : databaseMaintenance ? "Refresh" : "Load database"}
+                {databaseBusy ? "Loading..." : databaseMaintenance ? "Refresh backups" : "Load backups"}
               </button>
             </div>
           </div>
@@ -1830,9 +1830,22 @@
           {/if}
           {#if databaseNotice}<p class="notice">{databaseNotice}</p>{/if}
           {#if databaseMaintenance}
+            <section class:good={databaseMaintenance.backupsReady} class:warning={!databaseMaintenance.backupsReady} class="backup-readiness">
+              <div>
+                <span>Manual database backups</span>
+                <strong>{databaseMaintenance.backupsReady ? "Ready" : "Needs attention"}</strong>
+              </div>
+              <p>
+                {databaseMaintenance.backupsReady
+                  ? "Physical backups and backup storage are both configured."
+                  : databaseMaintenance.physicalBackupsEnabled
+                    ? databaseMaintenance.backupStorageMessage
+                    : databaseMaintenance.physicalBackupsMessage}
+              </p>
+            </section>
             <div class="database-ribbon">
               <Card label="Schedules" value={`${databaseMaintenance.schedules.length}`} />
-              <Card label="Backups" value={`${databaseMaintenance.backups.length}`} />
+              <Card label="Backup runs" value={`${databaseMaintenance.backups.length}`} />
               <Card label="Restores" value={`${databaseMaintenance.restores.length}`} />
               <Card label="Operations" value={`${databaseMaintenance.operations.length + databaseMaintenance.migrations.length}`} />
             </div>
@@ -1868,7 +1881,7 @@
             <p class="muted">
               {databaseMaintenance
                 ? "No backup, restore, migration, or operation resources match the current filter."
-                : "Load database maintenance to inspect operator-managed backup and restore resources."}
+                : "Load backups to inspect operator-managed backup and restore resources."}
             </p>
           {/if}
         </section>

@@ -1133,6 +1133,45 @@ header,
   white-space: nowrap;
 }
 
+.backup-readiness {
+  display: grid;
+  grid-template-columns: minmax(12rem, auto) minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.85rem;
+  border: 1px solid rgba(214, 187, 133, 0.16);
+  border-radius: 8px;
+  background: rgba(8, 7, 6, 0.3);
+}
+
+.backup-readiness span,
+.backup-readiness strong {
+  display: block;
+}
+
+.backup-readiness span {
+  color: #b9aa91;
+  font-size: 0.78rem;
+}
+
+.backup-readiness strong {
+  color: #f2d492;
+  font-size: 1.2rem;
+}
+
+.backup-readiness p {
+  margin: 0;
+  color: #d9d1c4;
+}
+
+.backup-readiness.warning {
+  background: rgba(105, 78, 29, 0.28);
+}
+
+.backup-readiness.good {
+  background: rgba(44, 92, 57, 0.2);
+}
+
 .database-ribbon {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1547,6 +1586,7 @@ header,
   .event-list article,
   .storage-grid,
   .database-ribbon,
+  .backup-readiness,
   .database-card,
   .partition-list article,
   .partition-controls,
