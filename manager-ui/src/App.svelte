@@ -4,7 +4,6 @@
   import {
     ApiError,
     api,
-    type BattlegroupSummary,
     type LogsResponse,
     type Overview,
     type Session,
@@ -14,7 +13,7 @@
     type WorldLayout,
   } from "./api";
 
-  type Page = "dashboard" | "battlegroup" | "layout" | "config" | "players" | "logs" | "settings";
+  type Page = "dashboard" | "battlegroup" | "layout" | "config" | "director" | "players" | "logs" | "settings";
 
   let session: Session | null = null;
   let token = "";
@@ -34,6 +33,10 @@
   let settingsDraft = "";
   let settingsSaving = false;
   let settingsNotice = "";
+  let directorFlsDraft = "";
+  let directorTransferDraft = "";
+  let directorNotice = "";
+  let directorBusy = false;
 
   $: battlegroup = overview?.battlegroups[0] ?? null;
   $: pods = overview?.workloads.pods ?? [];
@@ -194,8 +197,76 @@
     }
   }
 
+  async function loadDirectorConfig() {
+    directorBusy = true;
+    directorNotice = "";
+    error = "";
+    try {
+      const [fls, transfer] = await Promise.all([
+        api<unknown>("/api/director/config/fls"),
+        api<unknown>("/api/director/config/character-transfer"),
+      ]);
+      directorFlsDraft = formatJson(fls);
+      directorTransferDraft = formatJson(transfer);
+    } catch (err) {
+      error = message(err);
+    } finally {
+      directorBusy = false;
+    }
+  }
+
+  async function saveDirectorConfig(kind: "fls" | "transfer") {
+    directorBusy = true;
+    directorNotice = "";
+    error = "";
+    try {
+      const path =
+        kind === "fls" ? "/api/director/config/fls" : "/api/director/config/character-transfer";
+      const draft = kind === "fls" ? directorFlsDraft : directorTransferDraft;
+      await api(path, {
+        method: "POST",
+        body: JSON.stringify(parseJsonDraft(draft)),
+      });
+      directorNotice = "Director override saved.";
+      await loadDirectorConfig();
+    } catch (err) {
+      error = message(err);
+    } finally {
+      directorBusy = false;
+    }
+  }
+
+  async function clearDirectorConfig(kind: "fls" | "transfer") {
+    directorBusy = true;
+    directorNotice = "";
+    error = "";
+    try {
+      const path =
+        kind === "fls" ? "/api/director/config/fls" : "/api/director/config/character-transfer";
+      await api(path, { method: "DELETE" });
+      directorNotice = "Director override cleared.";
+      await loadDirectorConfig();
+    } catch (err) {
+      error = message(err);
+    } finally {
+      directorBusy = false;
+    }
+  }
+
   function message(err: unknown) {
     return err instanceof Error ? err.message : "Operation failed.";
+  }
+
+  function formatJson(value: unknown) {
+    return JSON.stringify(value, null, 2);
+  }
+
+  function parseJsonDraft(value: string) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      throw new Error("JSON is not valid.");
+    }
   }
 </script>
 
@@ -225,7 +296,7 @@
         <strong>Dune Manager</strong>
         <span>{session.namespace}</span>
       </div>
-      {#each ["dashboard", "battlegroup", "layout", "config", "players", "logs", "settings"] as item}
+      {#each ["dashboard", "battlegroup", "layout", "config", "director", "players", "logs", "settings"] as item}
         <button class:active={page === item} on:click={() => (page = item as Page)}>{item}</button>
       {/each}
       <button class="ghost" on:click={logout}>Sign out</button>
@@ -324,6 +395,41 @@
               {/each}
             </div>
           {/if}
+        </section>
+      {:else if page === "director"}
+        <section class="panel form">
+          <div class="split-heading">
+            <div>
+              <h2>Director Config</h2>
+              <p class="muted">Edit authenticated Director overrides without exposing the internal Director service.</p>
+            </div>
+            <button disabled={directorBusy} on:click={loadDirectorConfig}>
+              {directorBusy ? "Working..." : "Load config"}
+            </button>
+          </div>
+          {#if directorNotice}<p class="warn">{directorNotice}</p>{/if}
+          <div class="editor-grid">
+            <section>
+              <div class="editor-title">
+                <h3>FLS report settings</h3>
+                <div class="actions">
+                  <button disabled={directorBusy || !directorFlsDraft} on:click={() => saveDirectorConfig("fls")}>Save</button>
+                  <button disabled={directorBusy} class="danger" on:click={() => clearDirectorConfig("fls")}>Clear</button>
+                </div>
+              </div>
+              <textarea bind:value={directorFlsDraft} spellcheck="false" placeholder="Load config to edit JSON"></textarea>
+            </section>
+            <section>
+              <div class="editor-title">
+                <h3>Character transfer</h3>
+                <div class="actions">
+                  <button disabled={directorBusy || !directorTransferDraft} on:click={() => saveDirectorConfig("transfer")}>Save</button>
+                  <button disabled={directorBusy} class="danger" on:click={() => clearDirectorConfig("transfer")}>Clear</button>
+                </div>
+              </div>
+              <textarea bind:value={directorTransferDraft} spellcheck="false" placeholder="Load config to edit JSON"></textarea>
+            </section>
+          </div>
         </section>
       {:else if page === "players"}
         <div class="grid">

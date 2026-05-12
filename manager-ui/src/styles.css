@@ -71,6 +71,7 @@ textarea {
 
 h1,
 h2,
+h3,
 p {
   margin-top: 0;
 }
@@ -218,6 +219,24 @@ header,
 
 .section-list summary span {
   color: #b9aa91;
+}
+
+.editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.editor-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.editor-title h3 {
+  margin-bottom: 0;
 }
 
 .metric-card,
