@@ -52,3 +52,33 @@ pub struct UserSettingsUpdateResponse {
     pub file: UserSettingsFile,
     pub restart_recommended: bool,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserSettingsBackupSummary {
+    pub id: String,
+    pub file_name: String,
+    pub size_bytes: usize,
+    pub modified_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserSettingsBackupsResponse {
+    pub file: String,
+    pub backups: Vec<UserSettingsBackupSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserSettingsBackupCreateResponse {
+    pub backup: UserSettingsBackupSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserSettingsRestoreResponse {
+    pub file: UserSettingsFile,
+    pub restored_from: String,
+    pub restart_recommended: bool,
+}

@@ -9,13 +9,15 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::{
     errors::ApiError,
     models::{
-        IniEntry, IniSection, UserSettingsCatalog, UserSettingsFile, UserSettingsFileSummary,
-        UserSettingsUpdateResponse,
+        IniEntry, IniSection, UserSettingsBackupCreateResponse, UserSettingsBackupSummary,
+        UserSettingsBackupsResponse, UserSettingsCatalog, UserSettingsFile,
+        UserSettingsFileSummary, UserSettingsRestoreResponse, UserSettingsUpdateResponse,
     },
     state::AppState,
 };
 
 const SETTINGS_DIR: &str = "/srv/UserSettings";
+const BACKUP_DIR: &str = "/srv/UserSettings/.dune-manager-backups";
 const MAX_SETTINGS_BYTES: usize = 512 * 1024;
 const MISSING_MARKER: &str = "__DUNE_MANAGER_SETTINGS_FILE_MISSING__";
 
@@ -114,6 +116,7 @@ pub async fn write_user_settings_file(
 ) -> Result<UserSettingsUpdateResponse, ApiError> {
     let kind = UserSettingsKind::parse(file_id)?;
     validate_settings_content(&content)?;
+    let _ = create_user_settings_backup_for_kind(state, kind).await?;
     exec_filebrowser(
         state,
         vec![
@@ -135,6 +138,141 @@ pub async fn write_user_settings_file(
         file: read_user_settings_file(state, file_id).await?,
         restart_recommended: true,
     })
+}
+
+pub async fn list_user_settings_backups(
+    state: &AppState,
+    file_id: &str,
+) -> Result<UserSettingsBackupsResponse, ApiError> {
+    let kind = UserSettingsKind::parse(file_id)?;
+    let output = exec_filebrowser(
+        state,
+        vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!(
+                "set -eu\ndir={}\nmkdir -p \"$dir\"\nfor f in \"$dir\"/{}.*.bak; do\n  [ -e \"$f\" ] || continue\n  base=${{f##*/}}\n  size=$(wc -c < \"$f\" | tr -d ' ')\n  modified=$(date -u -r \"$f\" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo '')\n  printf '%s\\t%s\\t%s\\n' \"$base\" \"$size\" \"$modified\"\ndone\n",
+                sh_single_quoted(BACKUP_DIR),
+                kind.file_name(),
+            ),
+        ],
+        None,
+    )
+    .await?;
+
+    let mut backups = parse_backup_list(&output)?;
+    backups.sort_by(|left, right| right.id.cmp(&left.id));
+    Ok(UserSettingsBackupsResponse {
+        file: kind.id().to_string(),
+        backups,
+    })
+}
+
+pub async fn create_user_settings_backup(
+    state: &AppState,
+    file_id: &str,
+) -> Result<UserSettingsBackupCreateResponse, ApiError> {
+    let kind = UserSettingsKind::parse(file_id)?;
+    Ok(UserSettingsBackupCreateResponse {
+        backup: create_user_settings_backup_for_kind(state, kind).await?,
+    })
+}
+
+pub async fn restore_user_settings_backup(
+    state: &AppState,
+    file_id: &str,
+    backup_id: &str,
+) -> Result<UserSettingsRestoreResponse, ApiError> {
+    let kind = UserSettingsKind::parse(file_id)?;
+    validate_backup_id(kind, backup_id)?;
+    let _ = create_user_settings_backup_for_kind(state, kind).await?;
+    exec_filebrowser(
+        state,
+        vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!(
+                "set -eu\nbackup={}\ndest={}\n[ -f \"$backup\" ] || {{ echo 'backup not found' >&2; exit 1; }}\ncp \"$backup\" \"$dest\"\nchmod 0644 \"$dest\"\n",
+                sh_single_quoted(&format!("{BACKUP_DIR}/{backup_id}")),
+                sh_single_quoted(&kind.remote_path()),
+            ),
+        ],
+        None,
+    )
+    .await?;
+
+    Ok(UserSettingsRestoreResponse {
+        file: read_user_settings_file(state, file_id).await?,
+        restored_from: backup_id.to_string(),
+        restart_recommended: true,
+    })
+}
+
+async fn create_user_settings_backup_for_kind(
+    state: &AppState,
+    kind: UserSettingsKind,
+) -> Result<UserSettingsBackupSummary, ApiError> {
+    let output = exec_filebrowser(
+        state,
+        vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!(
+                "set -eu\nsrc={}\ndir={}\n[ -f \"$src\" ] || {{ echo 'settings file not found' >&2; exit 1; }}\nmkdir -p \"$dir\"\nstamp=$(date -u +%Y%m%dT%H%M%SZ)\nbackup=\"$dir/{}.$stamp.$$.bak\"\ncp \"$src\" \"$backup\"\nchmod 0644 \"$backup\"\nsize=$(wc -c < \"$backup\" | tr -d ' ')\nmodified=$(date -u -r \"$backup\" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo '')\nprintf '%s\\t%s\\t%s\\n' \"${{backup##*/}}\" \"$size\" \"$modified\"\n",
+                sh_single_quoted(&kind.remote_path()),
+                sh_single_quoted(BACKUP_DIR),
+                kind.file_name(),
+            ),
+        ],
+        None,
+    )
+    .await?;
+    parse_backup_list(&output)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| ApiError::bad_gateway("settings backup was not created"))
+}
+
+fn parse_backup_list(output: &str) -> Result<Vec<UserSettingsBackupSummary>, ApiError> {
+    output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let mut parts = line.splitn(3, '\t');
+            let id = parts.next().unwrap_or_default().to_string();
+            let size_bytes = parts
+                .next()
+                .unwrap_or_default()
+                .parse::<usize>()
+                .map_err(|_| ApiError::bad_gateway("failed to parse settings backup size"))?;
+            let modified_at = parts
+                .next()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string);
+            Ok(UserSettingsBackupSummary {
+                file_name: id.clone(),
+                id,
+                size_bytes,
+                modified_at,
+            })
+        })
+        .collect()
+}
+
+fn validate_backup_id(kind: UserSettingsKind, value: &str) -> Result<(), ApiError> {
+    let expected_prefix = format!("{}.", kind.file_name());
+    if !value.starts_with(&expected_prefix)
+        || !value.ends_with(".bak")
+        || value.contains('/')
+        || value.contains('\\')
+        || !value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_'))
+    {
+        return Err(ApiError::bad_request("invalid settings backup id"));
+    }
+    Ok(())
 }
 
 fn validate_settings_content(content: &str) -> Result<(), ApiError> {
@@ -315,5 +453,31 @@ m_bShouldForceEnablePvpOnAllPartitions=False
     fn rejects_oversized_settings_content() {
         let content = "x".repeat(MAX_SETTINGS_BYTES + 1);
         assert!(validate_settings_content(&content).is_err());
+    }
+
+    #[test]
+    fn validates_backup_ids_by_settings_file() {
+        assert!(
+            validate_backup_id(UserSettingsKind::Game, "UserGame.ini.20260512T010203Z.bak").is_ok()
+        );
+        assert!(validate_backup_id(UserSettingsKind::Game, "../UserGame.ini.bak").is_err());
+        assert!(validate_backup_id(
+            UserSettingsKind::Game,
+            "UserEngine.ini.20260512T010203Z.bak"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn parses_backup_listing() {
+        let backups =
+            parse_backup_list("UserGame.ini.20260512T010203Z.bak\t42\t2026-05-12T01:02:03Z\n")
+                .unwrap();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(backups[0].size_bytes, 42);
+        assert_eq!(
+            backups[0].modified_at.as_deref(),
+            Some("2026-05-12T01:02:03Z")
+        );
     }
 }

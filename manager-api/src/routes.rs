@@ -90,6 +90,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/config/user-settings/:file",
             get(user_settings_file).put(update_user_settings_file),
         )
+        .route(
+            "/api/config/user-settings/:file/backups",
+            get(user_settings_backups).post(create_user_settings_backup_route),
+        )
+        .route(
+            "/api/config/user-settings/:file/backups/:backup/restore",
+            post(restore_user_settings_backup_route),
+        )
         .route("/api/director/battlegroup", get(director_battlegroup))
         .route("/api/director/capabilities", get(director_capabilities))
         .route(
@@ -442,6 +450,40 @@ async fn update_user_settings_file(
     audit_action("config.user-settings.update", Some(&file));
     Ok(Json(
         write_user_settings_file(&state, &file, request.content).await?,
+    ))
+}
+
+async fn user_settings_backups(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(file): Path<String>,
+) -> ApiResponse<UserSettingsBackupsResponse> {
+    authorize(&state, &headers, None)?;
+    Ok(Json(list_user_settings_backups(&state, &file).await?))
+}
+
+async fn create_user_settings_backup_route(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(file): Path<String>,
+) -> ApiResponse<UserSettingsBackupCreateResponse> {
+    authorize(&state, &headers, None)?;
+    audit_action("config.user-settings.backup", Some(&file));
+    Ok(Json(create_user_settings_backup(&state, &file).await?))
+}
+
+async fn restore_user_settings_backup_route(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((file, backup)): Path<(String, String)>,
+) -> ApiResponse<UserSettingsRestoreResponse> {
+    authorize(&state, &headers, None)?;
+    audit_action(
+        "config.user-settings.restore",
+        Some(&format!("{file}/{backup}")),
+    );
+    Ok(Json(
+        restore_user_settings_backup(&state, &file, &backup).await?,
     ))
 }
 

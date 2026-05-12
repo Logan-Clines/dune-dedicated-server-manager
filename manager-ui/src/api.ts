@@ -163,6 +163,28 @@ export type UserSettingsUpdateResponse = {
   restartRecommended: boolean;
 };
 
+export type UserSettingsBackupSummary = {
+  id: string;
+  fileName: string;
+  sizeBytes: number;
+  modifiedAt?: string;
+};
+
+export type UserSettingsBackupsResponse = {
+  file: string;
+  backups: UserSettingsBackupSummary[];
+};
+
+export type UserSettingsBackupCreateResponse = {
+  backup: UserSettingsBackupSummary;
+};
+
+export type UserSettingsRestoreResponse = {
+  file: UserSettingsFile;
+  restoredFrom: string;
+  restartRecommended: boolean;
+};
+
 export type TelemetryEnvelope = {
   eventType: "snapshot" | "error";
   timeUnixMs: number;

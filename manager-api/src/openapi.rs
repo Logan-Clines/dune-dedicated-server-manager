@@ -206,6 +206,28 @@ pub fn document() -> Value {
                     "responses": { "200": { "description": "Updated settings file content and parsed sections" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/Error" } }
                 }
             },
+            "/api/config/user-settings/{file}/backups": {
+                "get": {
+                    "summary": "List settings file backups",
+                    "parameters": [settings_file_parameter()],
+                    "responses": { "200": { "description": "Available settings backups" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+                },
+                "post": {
+                    "summary": "Create a settings file backup",
+                    "parameters": [settings_file_parameter()],
+                    "responses": { "200": { "description": "Created settings backup" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/Error" } }
+                }
+            },
+            "/api/config/user-settings/{file}/backups/{backup}/restore": {
+                "post": {
+                    "summary": "Restore a settings file backup",
+                    "parameters": [
+                        settings_file_parameter(),
+                        { "name": "backup", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Restored settings file" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/Error" } }
+                }
+            },
             "/api/director/capabilities": {
                 "get": {
                     "summary": "List Director proxy capabilities",
@@ -272,6 +294,10 @@ fn name_parameter() -> Value {
 
 fn map_parameter() -> Value {
     json!({ "name": "mapName", "in": "path", "required": true, "schema": { "type": "string" } })
+}
+
+fn settings_file_parameter() -> Value {
+    json!({ "name": "file", "in": "path", "required": true, "schema": { "type": "string", "enum": ["engine", "game"] } })
 }
 
 fn path_parameter() -> Value {

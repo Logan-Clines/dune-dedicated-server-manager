@@ -13,8 +13,11 @@
     type Session,
     type TelemetryEnvelope,
     type TelemetrySnapshot,
+    type UserSettingsBackupCreateResponse,
+    type UserSettingsBackupsResponse,
     type UserSettingsCatalog,
     type UserSettingsFile,
+    type UserSettingsRestoreResponse,
     type UserSettingsUpdateResponse,
     type WorldLayout,
   } from "./api";
@@ -53,6 +56,8 @@
   let settingsFile: UserSettingsFile | null = null;
   let settingsDraft = "";
   let settingsSaving = false;
+  let settingsBackupBusy = "";
+  let settingsBackups: UserSettingsBackupsResponse | null = null;
   let settingsNotice = "";
   let settingsFilter = "";
   let directorFlsDraft = "";
@@ -154,6 +159,7 @@
     layout = null;
     settingsCatalog = null;
     settingsFile = null;
+    settingsBackups = null;
   }
 
   async function refresh(showError = true) {
@@ -379,6 +385,7 @@
     try {
       settingsFile = await api<UserSettingsFile>(`/api/config/user-settings/${file}`);
       settingsDraft = settingsFile.content;
+      await loadSettingsBackups(file);
     } catch (err) {
       error = message(err);
     }
@@ -399,10 +406,66 @@
       settingsNotice = result.restartRecommended
         ? "Saved. Restart the battlegroup for every runtime system to pick up the change."
         : "Saved.";
+      await loadSettingsBackups(settingsFile.id);
     } catch (err) {
       error = message(err);
     } finally {
       settingsSaving = false;
+    }
+  }
+
+  async function loadSettingsBackups(file = selectedSettingsFile) {
+    settingsBackupBusy = "load";
+    try {
+      settingsBackups = await api<UserSettingsBackupsResponse>(`/api/config/user-settings/${file}/backups`);
+    } catch (err) {
+      error = message(err);
+    } finally {
+      settingsBackupBusy = "";
+    }
+  }
+
+  async function createSettingsBackup() {
+    if (!settingsFile) return;
+    settingsBackupBusy = "create";
+    error = "";
+    settingsNotice = "";
+    try {
+      const result = await api<UserSettingsBackupCreateResponse>(
+        `/api/config/user-settings/${settingsFile.id}/backups`,
+        { method: "POST" },
+      );
+      settingsNotice = `Backup created: ${result.backup.id}`;
+      await loadSettingsBackups(settingsFile.id);
+    } catch (err) {
+      error = message(err);
+    } finally {
+      settingsBackupBusy = "";
+    }
+  }
+
+  async function restoreSettingsBackup(backupId: string) {
+    if (!settingsFile) return;
+    const ok = window.confirm("Restore this settings backup? Current contents will be backed up first.");
+    if (!ok) return;
+    settingsBackupBusy = backupId;
+    error = "";
+    settingsNotice = "";
+    try {
+      const result = await api<UserSettingsRestoreResponse>(
+        `/api/config/user-settings/${settingsFile.id}/backups/${encodeURIComponent(backupId)}/restore`,
+        { method: "POST" },
+      );
+      settingsFile = result.file;
+      settingsDraft = result.file.content;
+      settingsNotice = result.restartRecommended
+        ? "Backup restored. Restart the battlegroup for every runtime system to pick up the change."
+        : "Backup restored.";
+      await loadSettingsBackups(settingsFile.id);
+    } catch (err) {
+      error = message(err);
+    } finally {
+      settingsBackupBusy = "";
     }
   }
 
@@ -618,6 +681,12 @@
       throw new Error("JSON is not valid.");
     }
   }
+
+  function formatBackupTime(value?: string) {
+    if (!value) return "Unknown time";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  }
 </script>
 
 {#if loading}
@@ -828,6 +897,43 @@
             </div>
             <textarea bind:value={settingsDraft} spellcheck="false"></textarea>
             {#if settingsNotice}<p class="warn">{settingsNotice}</p>{/if}
+            <section class="backup-panel">
+              <div class="editor-title">
+                <div>
+                  <h3>Backups</h3>
+                  <p class="muted">A backup is created automatically before every save and restore.</p>
+                </div>
+                <div class="actions">
+                  <button disabled={!!settingsBackupBusy} on:click={() => loadSettingsBackups()}>
+                    {settingsBackupBusy === "load" ? "Loading..." : "Refresh"}
+                  </button>
+                  <button disabled={!!settingsBackupBusy} on:click={createSettingsBackup}>
+                    {settingsBackupBusy === "create" ? "Creating..." : "Create backup"}
+                  </button>
+                </div>
+              </div>
+              {#if settingsBackups?.backups.length}
+                <div class="backup-list">
+                  {#each settingsBackups.backups.slice(0, 8) as backup}
+                    <article class="backup-row">
+                      <div>
+                        <strong>{formatBackupTime(backup.modifiedAt)}</strong>
+                        <span>{backup.id} · {backup.sizeBytes} bytes</span>
+                      </div>
+                      <button
+                        class="danger"
+                        disabled={!!settingsBackupBusy}
+                        on:click={() => restoreSettingsBackup(backup.id)}
+                      >
+                        {settingsBackupBusy === backup.id ? "Restoring..." : "Restore"}
+                      </button>
+                    </article>
+                  {/each}
+                </div>
+              {:else}
+                <p class="muted">No backups found for this file yet.</p>
+              {/if}
+            </section>
             <div class="section-list compact-preview">
               {#each settingsFile.sections.slice(0, 12) as section}
                 <details>
