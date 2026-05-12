@@ -1,6 +1,7 @@
 pub mod battlegroup;
 pub mod common;
 pub mod config;
+pub mod database;
 pub mod director;
 pub mod kubernetes;
 pub mod logs;
@@ -10,6 +11,7 @@ pub mod telemetry;
 pub use battlegroup::*;
 pub use common::*;
 pub use config::*;
+pub use database::*;
 pub use director::*;
 pub use kubernetes::*;
 pub use logs::*;

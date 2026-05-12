@@ -121,6 +121,21 @@ export type DatabaseMaintenanceResponse = {
   operations: DatabaseMaintenanceItem[];
 };
 
+export type DatabaseWorldPartition = {
+  partitionId: number;
+  serverId?: string;
+  map: string;
+  partitionDefinition: string;
+  dimensionIndex: number;
+  blocked: boolean;
+  label?: string;
+};
+
+export type DatabaseWorldPartitionsResponse = {
+  namespace: string;
+  rows: DatabaseWorldPartition[];
+};
+
 export type PlayerSummary = {
   active: number;
   online: number;

@@ -1145,6 +1145,74 @@ header,
   color: #e9c37e;
 }
 
+.controlled-db-panel {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(214, 187, 133, 0.14);
+  border-radius: 8px;
+  background: rgba(8, 7, 6, 0.3);
+}
+
+.partition-list {
+  display: grid;
+  gap: 0.55rem;
+  max-height: 28rem;
+  overflow: auto;
+}
+
+.partition-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.8rem;
+  align-items: center;
+  padding: 0.72rem 0.8rem;
+  border: 1px solid rgba(214, 187, 133, 0.13);
+  border-radius: 8px;
+  background: rgba(8, 7, 6, 0.3);
+}
+
+.partition-list strong,
+.partition-list span,
+.partition-list b,
+.partition-list em {
+  display: block;
+}
+
+.partition-list strong,
+.partition-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.partition-list span,
+.partition-meta span {
+  color: #b9aa91;
+  font-size: 0.78rem;
+}
+
+.partition-meta {
+  display: grid;
+  min-width: 11rem;
+  justify-items: end;
+  gap: 0.18rem;
+}
+
+.partition-meta b {
+  color: #f2d492;
+}
+
+.partition-meta em {
+  color: #91d18b;
+  font-size: 0.76rem;
+  font-style: normal;
+}
+
+.partition-meta em.warning {
+  color: #ffe3a9;
+}
+
 .metric-card,
 .panel {
   padding: 1rem;
@@ -1277,7 +1345,8 @@ header,
   .event-list article,
   .storage-grid,
   .database-ribbon,
-  .database-card {
+  .database-card,
+  .partition-list article {
     grid-template-columns: 1fr;
   }
 
@@ -1286,6 +1355,10 @@ header,
   }
 
   .workload-meta {
+    justify-items: start;
+  }
+
+  .partition-meta {
     justify-items: start;
   }
 }

@@ -26,6 +26,7 @@ use crate::{
     auth::authorize,
     clock::now_unix_ms,
     config_files_domain::*,
+    database_domain::*,
     director_domain::*,
     director_proxy::*,
     errors::*,
@@ -85,6 +86,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/workloads", get(workloads))
         .route("/api/events", get(events))
         .route("/api/storage", get(storage))
+        .route(
+            "/api/database/world-partitions",
+            get(database_world_partitions),
+        )
         .route("/api/database-maintenance", get(database_maintenance))
         .route(
             "/api/database-maintenance/backups",
@@ -600,6 +605,17 @@ async fn storage(
     Ok(Json(StorageResponse {
         namespace: state.namespace.clone(),
         claims: list_persistent_volume_claims(&state).await?,
+    }))
+}
+
+async fn database_world_partitions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> ApiResponse<DatabaseWorldPartitionsResponse> {
+    authorize(&state, &headers, None)?;
+    Ok(Json(DatabaseWorldPartitionsResponse {
+        namespace: state.namespace.clone(),
+        rows: list_world_partitions(&state).await?,
     }))
 }
 

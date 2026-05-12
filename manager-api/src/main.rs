@@ -10,6 +10,7 @@ mod auth;
 mod clock;
 mod config;
 mod config_files_domain;
+mod database_domain;
 mod director_domain;
 mod director_proxy;
 mod errors;

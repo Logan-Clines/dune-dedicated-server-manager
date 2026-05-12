@@ -188,6 +188,12 @@ pub fn document() -> Value {
                     "responses": { "200": { "description": "Persistent volume claim summaries" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
                 }
             },
+            "/api/database/world-partitions": {
+                "get": {
+                    "summary": "List controlled world partition rows from the game database",
+                    "responses": { "200": { "description": "World partition rows" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+                }
+            },
             "/api/database-maintenance": {
                 "get": {
                     "summary": "List database backup, restore, migration, schedule, and operation resources",

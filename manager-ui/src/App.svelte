@@ -8,6 +8,8 @@
     type BattlegroupSummary,
     type DatabaseMaintenanceItem,
     type DatabaseMaintenanceResponse,
+    type DatabaseWorldPartition,
+    type DatabaseWorldPartitionsResponse,
     type DirectorCapabilities,
     type DirectorMapConfigDetail,
     type DirectorPathCapability,
@@ -136,7 +138,9 @@
   let storageBusy = false;
   let storageFilter = "";
   let databaseMaintenance: DatabaseMaintenanceResponse | null = null;
+  let databaseWorldPartitions: DatabaseWorldPartitionsResponse | null = null;
   let databaseBusy = false;
+  let databaseTablesBusy = false;
   let databaseActionBusy = false;
   let databaseFilter = "";
   let databaseNotice = "";
@@ -156,6 +160,7 @@
   $: visibleEvents = filterEvents(events, workloadFilter);
   $: visibleStorageClaims = filterStorageClaims(storageClaims, storageFilter);
   $: visibleDatabaseItems = filterDatabaseMaintenance(databaseMaintenanceItems(databaseMaintenance), databaseFilter);
+  $: visibleWorldPartitions = filterWorldPartitions(databaseWorldPartitions?.rows ?? [], databaseFilter);
   $: layoutMemory = layout ? estimateLayoutMemory(layout) : null;
   $: layoutDeepDesertMode = layout
     ? layout.deepDesertPvpInstances > 0
@@ -570,6 +575,18 @@
     }
   }
 
+  async function loadDatabaseWorldPartitions() {
+    databaseTablesBusy = true;
+    error = "";
+    try {
+      databaseWorldPartitions = await api<DatabaseWorldPartitionsResponse>("/api/database/world-partitions");
+    } catch (err) {
+      error = message(err);
+    } finally {
+      databaseTablesBusy = false;
+    }
+  }
+
   async function createDatabaseBackup() {
     if (databaseMaintenance && !databaseMaintenance.backupsReady) {
       databaseNotice = databaseMaintenance.physicalBackupsEnabled
@@ -905,6 +922,17 @@
         item.latestEvent?.reason,
         item.latestEvent?.message,
       ]
+        .join(" ")
+        .toLowerCase()
+        .includes(text),
+    );
+  }
+
+  function filterWorldPartitions(items: DatabaseWorldPartition[], filter: string) {
+    const text = filter.trim().toLowerCase();
+    if (!text) return items;
+    return items.filter((item) =>
+      [item.partitionId, item.serverId, item.map, item.dimensionIndex, item.blocked, item.label]
         .join(" ")
         .toLowerCase()
         .includes(text),
@@ -1572,11 +1600,11 @@
         <section class="panel form">
           <div class="split-heading">
             <div>
-              <h2>Database</h2>
-              <p class="muted">Track backup schedules, backup runs, restores, migrations, and database utility operations.</p>
+              <h2>Backups and Database</h2>
+              <p class="muted">Manage backup readiness and inspect approved game database data without arbitrary table editing.</p>
             </div>
             <div class="actions">
-              <input bind:value={databaseFilter} placeholder="Filter database activity" />
+              <input bind:value={databaseFilter} placeholder="Filter backups or partitions" />
               {#if databaseMaintenance && !databaseMaintenance.physicalBackupsEnabled}
                 <button disabled={databaseActionBusy || !battlegroup} on:click={enablePhysicalBackups}>
                   {databaseActionBusy ? "Enabling..." : "Enable backups"}
@@ -1608,6 +1636,38 @@
               <Card label="Operations" value={`${databaseMaintenance.operations.length + databaseMaintenance.migrations.length}`} />
             </div>
           {/if}
+          <section class="controlled-db-panel">
+            <div class="editor-title">
+              <div>
+                <h3>World partitions</h3>
+                <p class="muted">Approved read-only view of partition IDs, maps, dimensions, labels, and active server assignment.</p>
+              </div>
+              <button disabled={databaseTablesBusy} on:click={loadDatabaseWorldPartitions}>
+                {databaseTablesBusy ? "Loading..." : databaseWorldPartitions ? "Refresh" : "Load"}
+              </button>
+            </div>
+            {#if visibleWorldPartitions.length}
+              <div class="partition-list">
+                {#each visibleWorldPartitions as partition}
+                  <article>
+                    <div>
+                      <strong>{partition.map}</strong>
+                      <span>{partition.label || "No label"} · dimension {partition.dimensionIndex}</span>
+                    </div>
+                    <div class="partition-meta">
+                      <b>#{partition.partitionId}</b>
+                      <span>{partition.serverId || "No server"}</span>
+                      <em class:warning={partition.blocked}>{partition.blocked ? "Blocked" : "Open"}</em>
+                    </div>
+                  </article>
+                {/each}
+              </div>
+            {:else if databaseWorldPartitions}
+              <p class="muted">No world partitions match the current filter.</p>
+            {:else}
+              <p class="muted">Load world partitions to inspect the game database through the controlled Manager API query.</p>
+            {/if}
+          </section>
           {#if visibleDatabaseItems.length}
             <div class="database-list">
               {#each visibleDatabaseItems as item}
@@ -1636,7 +1696,11 @@
               {/each}
             </div>
           {:else}
-            <p class="muted">Load database maintenance to inspect operator-managed backup and restore resources.</p>
+            <p class="muted">
+              {databaseMaintenance
+                ? "No backup, restore, migration, or operation resources match the current filter."
+                : "Load database maintenance to inspect operator-managed backup and restore resources."}
+            </p>
           {/if}
         </section>
       {:else if page === "battlegroup"}
