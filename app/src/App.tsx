@@ -37,6 +37,8 @@ import {
   Theme,
 } from "@radix-ui/themes";
 import {
+  ChevronDownIcon,
+  ChevronUpIcon,
   CubeIcon,
   GlobeIcon,
   LightningBoltIcon,
@@ -55,7 +57,7 @@ type PageId = (typeof pages)[number]["id"];
 
 type NetworkMode = "static" | "dhcp";
 type PlayerIpMode = "local" | "external";
-type SetupTarget = "hyperv" | "ubuntu";
+type SetupTarget = "hyperv" | "ubuntu" | "proxmox";
 type RemoteServerKind = "ubuntu" | "alpine";
 
 const startupUpdateChecksEnabled = import.meta.env.VITE_ENABLE_STARTUP_UPDATE_CHECK === "true";
@@ -129,6 +131,7 @@ type DetectionState = "idle" | "detecting" | "ready" | "failed";
 type LogLevel = "debug" | "info" | "warn" | "error";
 type LogLevelFilter = LogLevel;
 type UpdateStatus = "idle" | "checking" | "available" | "current" | "installing" | "relaunching" | "failed";
+type ServerPackageCheckStatus = "idle" | "checking" | "current" | "available" | "missing" | "updating" | "failed";
 
 type LogRow = {
   id: number;
@@ -155,6 +158,17 @@ type EnvironmentGate = {
 type SetupLogPayload = {
   level: LogLevel;
   scope: string;
+  message: string;
+};
+
+type ServerPackageStatus = {
+  packageDir: string;
+  appId: string;
+  installedBuildId?: string | null;
+  latestBuildId?: string | null;
+  updateAvailable: boolean;
+  complete: boolean;
+  layout?: "legacyInternalScripts" | "battlegroupManagement" | null;
   message: string;
 };
 
@@ -203,6 +217,74 @@ type RemoteSetupRunResult = {
   preflight: UbuntuSshPreflight;
 };
 
+type ProxmoxNode = {
+  node: string;
+  status: string;
+  cpu: number;
+  maxcpu: number;
+  mem: number;
+  maxmem: number;
+};
+
+type ProxmoxStorage = {
+  storage: string;
+  type: string;
+  content: string;
+  active: number;
+  shared: number;
+  avail: number;
+  total: number;
+};
+
+type ProxmoxBridge = {
+  iface: string;
+  type: string;
+  active: number;
+  cidr?: string | null;
+  autostart: number;
+};
+
+type ProxmoxDetection = {
+  version: { version: string; release: string; repoid: string };
+  certificateSha256: string;
+  certificateTrusted: boolean;
+  nodes: ProxmoxNode[];
+  storages: ProxmoxStorage[];
+  bridges: ProxmoxBridge[];
+  nextVmid: number;
+};
+
+type ProxmoxProvisioner = {
+  type: "proxmox";
+  profileId: string;
+  hostUrl: string;
+  tokenId: string;
+  acceptedCertificateSha256?: string;
+  node: string;
+  vmid: number;
+  vmName: string;
+};
+
+type ProxmoxAlpineSetupResult = {
+  host: string;
+  user: string;
+  keyPath: string;
+  namespace: string;
+  battlegroupName: string;
+  worldUniqueName: string;
+  node: string;
+  vmid: number;
+  vmName: string;
+};
+
+type ProxmoxVmStatus = {
+  status: string;
+  name: string;
+  pid?: number | null;
+  maxmem: number;
+  cpus: number;
+};
+
 type SetupRunResult = {
   vmName: string;
   namespace: string;
@@ -229,6 +311,7 @@ type RemoteServerRecord = {
   worldUniqueName: string;
   phase: string;
   createdAt: string;
+  provisioner?: ProxmoxProvisioner;
 };
 
 type RemoteServerProfile = {
@@ -236,6 +319,7 @@ type RemoteServerProfile = {
   host: string;
   keyPath?: string;
   createdAt: string;
+  provisioner?: ProxmoxProvisioner;
 };
 
 type LocalServerProfile = {
@@ -254,7 +338,19 @@ type RemoteBattlegroupStatus = {
 
 type RemoteServerStatus = {
   battlegroup: RemoteBattlegroupStatus;
+  package: RemoteServerPackageStatus;
 };
+
+type RemoteServerPackageStatus = {
+  installedBuildId?: string | null;
+  battlegroupVersion?: string | null;
+  liveBattlegroupVersion?: string | null;
+  operatorVersion?: string | null;
+};
+
+type PendingServerUpdate =
+  | { type: "remote"; server: RemoteServerRecord }
+  | { type: "local"; server: DuneVmCandidate };
 
 type LocalHyperVRuntime = {
   namespace: string;
@@ -381,6 +477,17 @@ type SetupForm = {
   remoteHost: string;
   remoteUser: string;
   remoteKeyPath: string;
+  proxmoxHostUrl: string;
+  proxmoxTokenId: string;
+  proxmoxTokenSecret: string;
+  proxmoxAcceptedCertificateSha256: string;
+  proxmoxNode: string;
+  proxmoxVmStorage: string;
+  proxmoxImportStorage: string;
+  proxmoxBridge: string;
+  proxmoxBridgeCidr: string;
+  proxmoxVmid: string;
+  proxmoxInstallQemuGuestAgent: boolean;
   saveLocalServer: boolean;
   saveRemoteServer: boolean;
 };
@@ -388,7 +495,7 @@ type SetupForm = {
 const defaultForm: SetupForm = {
   setupTarget: "hyperv",
   vmDestination: "",
-  vmName: "dune-awakening",
+  vmName: "dune-server",
   diskGb: "100",
   vmMemoryGb: "",
   processorCount: "4",
@@ -412,11 +519,23 @@ const defaultForm: SetupForm = {
   remoteHost: "",
   remoteUser: "root",
   remoteKeyPath: "",
+  proxmoxHostUrl: "",
+  proxmoxTokenId: "",
+  proxmoxTokenSecret: "",
+  proxmoxAcceptedCertificateSha256: "",
+  proxmoxNode: "",
+  proxmoxVmStorage: "",
+  proxmoxImportStorage: "",
+  proxmoxBridge: "",
+  proxmoxBridgeCidr: "",
+  proxmoxVmid: "",
+  proxmoxInstallQemuGuestAgent: true,
   saveLocalServer: true,
   saveRemoteServer: true,
 };
 
 const remoteProfileStorageKey = "dune-manager.remote-ubuntu-profile";
+const proxmoxProfileStorageKey = "dune-manager.proxmox-profile";
 const remoteServersStorageKey = "dune-manager.remote-servers";
 const localServersStorageKey = "dune-manager.local-hyperv-servers";
 const maxStoredLogRows = 2500;
@@ -429,7 +548,7 @@ const defaultRemoteAttachForm: RemoteAttachForm = {
 };
 
 const defaultLocalHyperVAttachForm: LocalHyperVAttachForm = {
-  vmName: "dune-awakening",
+  vmName: "dune-server",
   staticIp: "",
 };
 
@@ -449,9 +568,11 @@ export function App() {
   const [setupRows, setSetupRows] = useState<LogRow[]>([]);
   const [initRows, setInitRows] = useState<LogRow[]>([]);
   const [logLevelFilter, setLogLevelFilter] = useState<LogLevelFilter>("info");
+  const [logPanelCollapsed, setLogPanelCollapsed] = useState(false);
   const [rollbackOpen, setRollbackOpen] = useState(false);
   const [rollbackRunning, setRollbackRunning] = useState(false);
   const [failedRollbackRequest, setFailedRollbackRequest] = useState<RollbackRequest | null>(null);
+  const [pendingServerUpdate, setPendingServerUpdate] = useState<PendingServerUpdate | null>(null);
   const [localAttachOpen, setLocalAttachOpen] = useState(false);
   const [localAttachRunning, setLocalAttachRunning] = useState(false);
   const [localAttachForm, setLocalAttachForm] = useState<LocalHyperVAttachForm>(defaultLocalHyperVAttachForm);
@@ -465,6 +586,8 @@ export function App() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const [updateProgress, setUpdateProgress] = useState<string | null>(null);
+  const [serverPackageStatus, setServerPackageStatus] = useState<ServerPackageStatus | null>(null);
+  const [serverPackageCheckStatus, setServerPackageCheckStatus] = useState<ServerPackageCheckStatus>("idle");
   const [hostReadiness, setHostReadiness] = useState<HostReadiness | null>(null);
   const [driveCandidates, setDriveCandidates] = useState<DriveCandidate[]>([]);
   const [networkAdapters, setNetworkAdapters] = useState<NetworkAdapterCandidate[]>([]);
@@ -486,6 +609,9 @@ export function App() {
   const [serverTunnelBusy, setServerTunnelBusy] = useState<Record<string, boolean>>({});
   const [remotePreflight, setRemotePreflight] = useState<UbuntuSshPreflight | null>(null);
   const [remotePreflightStatus, setRemotePreflightStatus] = useState<DetectionState>("idle");
+  const [proxmoxDetection, setProxmoxDetection] = useState<ProxmoxDetection | null>(null);
+  const [proxmoxDetectionStatus, setProxmoxDetectionStatus] = useState<DetectionState>("idle");
+  const [proxmoxVmStatuses, setProxmoxVmStatuses] = useState<Record<string, ProxmoxVmStatus>>({});
   const calculatedMemory = useMemo(() => calculateRequiredMemory(form), [form]);
   const environmentGate = useMemo(
     () => setupEnvironmentGate(networkDetection, hostReadiness, networkAdapters),
@@ -533,6 +659,36 @@ export function App() {
       appendInitRow(log.warn("updates", `Update check failed: ${errorMessage(err)}`));
     } finally {
       updateCheckInFlight.current = false;
+    }
+  };
+  const refreshServerPackageStatus = async () => {
+    setServerPackageCheckStatus("checking");
+    appendInitRow(log.info("server-package", "Checking Dune server package status."));
+    try {
+      const status = await invoke<ServerPackageStatus>("server_package_status");
+      setServerPackageStatus(status);
+      setServerPackageCheckStatus(
+        !status.complete ? "missing" : status.updateAvailable ? "available" : "current",
+      );
+      appendInitRow(log.info("server-package", status.message));
+    } catch (err) {
+      setServerPackageCheckStatus("failed");
+      appendInitRow(log.warn("server-package", `Package status check failed: ${errorMessage(err)}`));
+    }
+  };
+  const updateServerPackage = async () => {
+    setServerPackageCheckStatus("updating");
+    appendInitRow(log.info("server-package", "Updating Dune server package."));
+    try {
+      const status = await invoke<ServerPackageStatus>("update_server_package");
+      setServerPackageStatus(status);
+      setServerPackageCheckStatus(
+        !status.complete ? "missing" : status.updateAvailable ? "available" : "current",
+      );
+      appendInitRow(log.info("server-package", status.message));
+    } catch (err) {
+      setServerPackageCheckStatus("failed");
+      appendInitRow(log.error("server-package", errorMessage(err)));
     }
   };
   const installAppUpdate = async () => {
@@ -649,6 +805,49 @@ export function App() {
     } catch (err) {
       setRemotePreflightStatus("failed");
       setSetupRows((rows) => [...rows, log.error("ubuntu.preflight", errorMessage(err))]);
+    }
+  };
+
+  const runProxmoxDetection = async () => {
+    setProxmoxDetectionStatus("detecting");
+    setProxmoxDetection(null);
+    setSetupRows((rows) => [...rows, log.info("proxmox.detect", "Detecting Proxmox resources.")]);
+    try {
+      const detection = await invoke<ProxmoxDetection>("detect_proxmox", {
+        request: proxmoxConnectionRequest(form),
+      });
+      setProxmoxDetection(detection);
+      setProxmoxDetectionStatus("ready");
+      const firstNode = detection.nodes[0]?.node || "";
+      const vmStorage = detection.storages.find((storage) => storage.content.includes("images"))?.storage || detection.storages[0]?.storage || "";
+      const importStorage = detection.storages.find((storage) => storage.content.includes("import"))?.storage || detection.storages[0]?.storage || "";
+      const bridge = detection.bridges[0];
+      setForm((current) => ({
+        ...current,
+        proxmoxNode: current.proxmoxNode || firstNode,
+        proxmoxVmStorage: current.proxmoxVmStorage || vmStorage,
+        proxmoxImportStorage: current.proxmoxImportStorage || importStorage,
+        proxmoxBridge: current.proxmoxBridge || bridge?.iface || "",
+        proxmoxBridgeCidr: current.proxmoxBridgeCidr || bridge?.cidr || "",
+        proxmoxVmid: current.proxmoxVmid || String(detection.nextVmid || ""),
+        proxmoxAcceptedCertificateSha256:
+          current.proxmoxAcceptedCertificateSha256 || detection.certificateSha256,
+      }));
+      setSetupRows((rows) => [
+        ...rows,
+        log.info(
+          "proxmox.detect",
+          `Detected Proxmox ${detection.version.version}; ${detection.nodes.length} node(s), ${detection.storages.length} storage target(s), ${detection.bridges.length} bridge(s).`,
+        ),
+      ]);
+      persistProxmoxProfile({
+        hostUrl: form.proxmoxHostUrl.trim(),
+        tokenId: form.proxmoxTokenId.trim(),
+        acceptedCertificateSha256: detection.certificateSha256,
+      });
+    } catch (err) {
+      setProxmoxDetectionStatus("failed");
+      setSetupRows((rows) => [...rows, log.error("proxmox.detect", errorMessage(err))]);
     }
   };
 
@@ -876,16 +1075,22 @@ export function App() {
     }
   };
 
-  const runRemoteBattlegroupAction = async (server: RemoteServerRecord, action: "start" | "stop") => {
-    setRemoteServerBusy((busy) => ({ ...busy, [server.id]: action === "start" ? "Starting battlegroup" : "Stopping battlegroup" }));
-    setSetupRows((rows) => [...rows, log.info("bg", `${action === "start" ? "Starting" : "Stopping"} remote battlegroup.`)]);
+  const runRemoteBattlegroupAction = async (server: RemoteServerRecord, action: "start" | "stop" | "update") => {
+    const busyText =
+      action === "start" ? "Starting battlegroup" : action === "stop" ? "Stopping battlegroup" : "Updating battlegroup";
+    const verb = action === "start" ? "Starting" : action === "stop" ? "Stopping" : "Updating";
+    setRemoteServerBusy((busy) => ({ ...busy, [server.id]: busyText }));
+    setSetupRows((rows) => [...rows, log.info("bg", `${verb} remote battlegroup.`)]);
     try {
       const liveServer = server.namespace && server.battlegroupName ? server : await detectRemoteServerDetails(server);
       setRemoteServers((servers) => persistRemoteServers(upsertRemoteServer(servers, liveServer)));
-      const status = await invoke<RemoteServerStatus>(
-        action === "start" ? "start_remote_battlegroup" : "stop_remote_battlegroup",
-        { request: remoteServerActionRequest(liveServer) },
-      );
+      const command =
+        action === "start"
+          ? "start_remote_battlegroup"
+          : action === "stop"
+            ? "stop_remote_battlegroup"
+            : "update_remote_battlegroup";
+      const status = await invoke<RemoteServerStatus>(command, { request: remoteServerActionRequest(liveServer) });
       const components = await invoke<RemoteServerComponent[]>("remote_server_components", {
         request: remoteServerActionRequest(liveServer),
       });
@@ -908,27 +1113,52 @@ export function App() {
     }
   };
 
-  const runLocalHyperVBattlegroupAction = async (server: DuneVmCandidate, action: "start" | "stop") => {
+  const runProxmoxVmAction = async (server: RemoteServerRecord, action: "start" | "stop" | "status") => {
+    if (!server.provisioner) return;
+    const key = server.id;
+    setRemoteServerBusy((busy) => ({ ...busy, [key]: action === "status" ? "Checking Proxmox VM" : `${action === "start" ? "Starting" : "Stopping"} Proxmox VM` }));
+    try {
+      const command =
+        action === "start" ? "start_proxmox_vm" : action === "stop" ? "stop_proxmox_vm" : "proxmox_vm_status";
+      const status = await invoke<ProxmoxVmStatus>(command, {
+        request: proxmoxVmActionRequest(server.provisioner),
+      });
+      setProxmoxVmStatuses((statuses) => ({ ...statuses, [key]: status }));
+      setSetupRows((rows) => [...rows, log.info("proxmox.vm", `VM ${server.provisioner?.vmid} is ${status.status || "unknown"}.`)]);
+    } catch (err) {
+      setSetupRows((rows) => [...rows, log.error("proxmox.vm", errorMessage(err))]);
+    } finally {
+      setRemoteServerBusy((busy) => omitKey(busy, key));
+    }
+  };
+
+  const runLocalHyperVBattlegroupAction = async (server: DuneVmCandidate, action: "start" | "stop" | "update") => {
     const serverKey = localServerKey(server);
     const runtime = localHyperVRuntimes[serverKey];
     if (!runtime) return;
+    const busyText =
+      action === "start" ? "Starting battlegroup" : action === "stop" ? "Stopping battlegroup" : "Updating battlegroup";
+    const verb = action === "start" ? "Starting" : action === "stop" ? "Stopping" : "Updating";
     setRemoteServerBusy((busy) => ({
       ...busy,
-      [serverKey]: action === "start" ? "Starting battlegroup" : "Stopping battlegroup",
+      [serverKey]: busyText,
     }));
-    setSetupRows((rows) => [...rows, log.info("bg", `${action === "start" ? "Starting" : "Stopping"} local battlegroup.`)]);
+    setSetupRows((rows) => [...rows, log.info("bg", `${verb} local battlegroup.`)]);
     try {
-      const status = await invoke<RemoteServerStatus>(
-        action === "start" ? "start_local_hyperv_battlegroup" : "stop_local_hyperv_battlegroup",
-        {
-          request: {
-            vmName: server.vm.name,
-            host: primaryLocalServerIp(server),
-            namespace: runtime.namespace,
-            battlegroupName: runtime.battlegroupName,
-          },
+      const command =
+        action === "start"
+          ? "start_local_hyperv_battlegroup"
+          : action === "stop"
+            ? "stop_local_hyperv_battlegroup"
+            : "update_local_hyperv_battlegroup";
+      const status = await invoke<RemoteServerStatus>(command, {
+        request: {
+          vmName: server.vm.name,
+          host: primaryLocalServerIp(server),
+          namespace: runtime.namespace,
+          battlegroupName: runtime.battlegroupName,
         },
-      );
+      });
       setLocalHyperVRuntimes((runtimes) => ({
         ...runtimes,
         [serverKey]: { ...runtime, status },
@@ -1151,8 +1381,30 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const text = window.localStorage.getItem(proxmoxProfileStorageKey);
+    if (!text) return;
+    try {
+      const profile = JSON.parse(text) as Partial<
+        Pick<SetupForm, "proxmoxHostUrl" | "proxmoxTokenId" | "proxmoxAcceptedCertificateSha256">
+      >;
+      setForm((current) =>
+        normalizeSetupForm({
+          ...current,
+          proxmoxHostUrl: profile.proxmoxHostUrl || current.proxmoxHostUrl,
+          proxmoxTokenId: profile.proxmoxTokenId || current.proxmoxTokenId,
+          proxmoxAcceptedCertificateSha256:
+            profile.proxmoxAcceptedCertificateSha256 || current.proxmoxAcceptedCertificateSha256,
+        }),
+      );
+    } catch {
+      window.localStorage.removeItem(proxmoxProfileStorageKey);
+    }
+  }, []);
+
+  useEffect(() => {
     setDuneVms(readLocalServers());
     setRemoteServers(readRemoteServers());
+    void refreshServerPackageStatus();
   }, []);
 
   useEffect(() => {
@@ -1183,6 +1435,19 @@ export function App() {
     setRemotePreflight(null);
     setRemotePreflightStatus("idle");
   }, [form.remoteHost, form.remoteKeyPath, form.remoteUser]);
+
+  useEffect(() => {
+    persistProxmoxProfile({
+      hostUrl: form.proxmoxHostUrl,
+      tokenId: form.proxmoxTokenId,
+      acceptedCertificateSha256: form.proxmoxAcceptedCertificateSha256,
+    });
+  }, [form.proxmoxHostUrl, form.proxmoxTokenId, form.proxmoxAcceptedCertificateSha256]);
+
+  useEffect(() => {
+    setProxmoxDetection(null);
+    setProxmoxDetectionStatus("idle");
+  }, [form.proxmoxHostUrl, form.proxmoxTokenId]);
 
   useEffect(() => {
     if (!startupUpdateChecksEnabled) {
@@ -1283,7 +1548,11 @@ export function App() {
     [logLevelFilter, logRows],
   );
   const startSetup = async () => {
-    const request = setupRunRequest(form, effectiveVmMemoryGb(form, calculatedMemory));
+    const setupMemoryGb =
+      form.setupTarget === "proxmox"
+        ? effectiveProxmoxVmMemoryGb(form, calculatedMemory, proxmoxDetection)
+        : effectiveVmMemoryGb(form, calculatedMemory);
+    const request = setupRunRequest(form, setupMemoryGb);
     setStarted(true);
     setSetupRunning(true);
     setFailedRollbackRequest(null);
@@ -1302,6 +1571,22 @@ export function App() {
         ]);
         if (form.saveRemoteServer) {
           const record = remoteServerRecordFromSetup(form, result, pendingRecord?.id);
+          setRemoteServers((servers) => persistRemoteServers(upsertRemoteServer(servers, record)));
+        }
+      } else if (form.setupTarget === "proxmox") {
+        const pendingRecord = form.saveRemoteServer ? proxmoxServerDraftFromForm(form) : null;
+        if (pendingRecord) {
+          setRemoteServers((servers) => persistRemoteServers(upsertRemoteServer(servers, pendingRecord)));
+        }
+        const result = await invoke<ProxmoxAlpineSetupResult>("start_proxmox_alpine_setup", {
+          request: proxmoxSetupRunRequest(form, setupMemoryGb),
+        });
+        setSetupRows((rows) => [
+          ...rows,
+          log.info("proxmox", "Proxmox Alpine provisioning completed. The server is starting through the guest bootstrap flow."),
+        ]);
+        if (form.saveRemoteServer) {
+          const record = proxmoxServerRecordFromSetup(form, result, pendingRecord?.id);
           setRemoteServers((servers) => persistRemoteServers(upsertRemoteServer(servers, record)));
         }
       } else {
@@ -1327,8 +1612,8 @@ export function App() {
     } catch (err) {
       console.error(err);
       appendSetupRow(log.error("setup", errorMessage(err)));
-      if (form.setupTarget === "ubuntu" && form.saveRemoteServer) {
-        const pending = remoteServerDraftFromForm(form);
+      if ((form.setupTarget === "ubuntu" || form.setupTarget === "proxmox") && form.saveRemoteServer) {
+        const pending = form.setupTarget === "proxmox" ? proxmoxServerDraftFromForm(form) : remoteServerDraftFromForm(form);
         setRemoteServers((servers) =>
           persistRemoteServers(upsertRemoteServer(servers, { ...pending, phase: "Setup failed" })),
         );
@@ -1354,6 +1639,17 @@ export function App() {
     }
   };
 
+  const confirmPendingServerUpdate = () => {
+    const pending = pendingServerUpdate;
+    if (!pending) return;
+    setPendingServerUpdate(null);
+    if (pending.type === "remote") {
+      void runRemoteBattlegroupAction(pending.server, "update");
+    } else {
+      void runLocalHyperVBattlegroupAction(pending.server, "update");
+    }
+  };
+
   return (
     <Theme
       appearance="dark"
@@ -1371,11 +1667,15 @@ export function App() {
           updateStatus={updateStatus}
           update={availableUpdate}
           updateProgress={updateProgress}
+          serverPackageStatus={serverPackageStatus}
+          serverPackageCheckStatus={serverPackageCheckStatus}
           onCheckUpdate={() => void checkForAppUpdate("manual")}
           onOpenUpdate={() => setUpdateDialogOpen(true)}
+          onCheckServerPackage={() => void refreshServerPackageStatus()}
+          onUpdateServerPackage={() => void updateServerPackage()}
         />
         <Separator size="4" />
-        <Box className={activePage === "servers" ? "app-main" : "app-main has-log"}>
+        <Box className={logPanelCollapsed ? "app-main log-collapsed" : "app-main has-log"}>
           <AppErrorBoundary
             onError={(message) => setSetupRows((rows) => [...rows, log.error("ui", message)])}
           >
@@ -1392,6 +1692,8 @@ export function App() {
                 remoteComponentRestartBusy={remoteComponentRestartBusy}
                 remoteStatusErrors={remoteServerStatusErrors}
                 remoteBusy={remoteServerBusy}
+                serverPackageStatus={serverPackageStatus}
+                proxmoxVmStatuses={proxmoxVmStatuses}
                 tunnels={serverTunnels}
                 tunnelBusy={serverTunnelBusy}
                 onAddLocalServer={() => setLocalAttachOpen(true)}
@@ -1411,8 +1713,13 @@ export function App() {
                 onRefreshRemoteStatus={(server) => void refreshRemoteServerStatus(server)}
                 onStartRemoteBattlegroup={(server) => void runRemoteBattlegroupAction(server, "start")}
                 onStopRemoteBattlegroup={(server) => void runRemoteBattlegroupAction(server, "stop")}
+                onUpdateRemoteBattlegroup={(server) => setPendingServerUpdate({ type: "remote", server })}
+                onRefreshProxmoxVm={(server) => void runProxmoxVmAction(server, "status")}
+                onStartProxmoxVm={(server) => void runProxmoxVmAction(server, "start")}
+                onStopProxmoxVm={(server) => void runProxmoxVmAction(server, "stop")}
                 onStartLocalBattlegroup={(server) => void runLocalHyperVBattlegroupAction(server, "start")}
                 onStopLocalBattlegroup={(server) => void runLocalHyperVBattlegroupAction(server, "stop")}
+                onUpdateLocalBattlegroup={(server) => setPendingServerUpdate({ type: "local", server })}
                 onStartTunnel={(request) => void startServerTunnel(request)}
                 onStopTunnel={(tunnelId) => void stopServerTunnel(tunnelId)}
                 onOpenTunnel={(tunnel) => void openServerTunnel(tunnel)}
@@ -1445,9 +1752,15 @@ export function App() {
                 vmDestinationHasVm={vmDestinationHasVm}
                 remotePreflight={remotePreflight}
                 remotePreflightStatus={remotePreflightStatus}
+                proxmoxDetection={proxmoxDetection}
+                proxmoxDetectionStatus={proxmoxDetectionStatus}
+                serverPackageStatus={serverPackageStatus}
+                serverPackageCheckStatus={serverPackageCheckStatus}
                 update={update}
+                onUpdateServerPackage={() => void updateServerPackage()}
                 onLocalDetection={() => void runLocalDetection()}
                 onRemotePreflight={() => void runRemotePreflight()}
+                onProxmoxDetection={() => void runProxmoxDetection()}
                 onStart={startSetup}
               />
             ) : null}
@@ -1458,14 +1771,14 @@ export function App() {
                 onGenerateUbuntuSshKey={() => void generateUbuntuSshKey()}
               />
             ) : null}
-            {activePage === "servers" ? null : (
-              <LogWindow
-                rows={visibleLogRows}
-                level={logLevelFilter}
-                onLevelChange={setLogLevelFilter}
-                onClear={clearLogRows}
-              />
-            )}
+            <LogWindow
+              rows={visibleLogRows}
+              level={logLevelFilter}
+              collapsed={logPanelCollapsed}
+              onLevelChange={setLogLevelFilter}
+              onClear={clearLogRows}
+              onToggleCollapsed={() => setLogPanelCollapsed((collapsed) => !collapsed)}
+            />
           </AppErrorBoundary>
         </Box>
         <RollbackDialog
@@ -1481,6 +1794,13 @@ export function App() {
           progress={updateProgress}
           onOpenChange={setUpdateDialogOpen}
           onInstall={() => void installAppUpdate()}
+        />
+        <ServerUpdateConfirmDialog
+          pending={pendingServerUpdate}
+          onOpenChange={(open) => {
+            if (!open) setPendingServerUpdate(null);
+          }}
+          onConfirm={confirmPendingServerUpdate}
         />
         <RemoteAttachDialog
           open={remoteAttachOpen}
@@ -1549,8 +1869,12 @@ function Header({
   updateStatus,
   update,
   updateProgress,
+  serverPackageStatus,
+  serverPackageCheckStatus,
   onCheckUpdate,
   onOpenUpdate,
+  onCheckServerPackage,
+  onUpdateServerPackage,
 }: {
   activePage: PageId;
   onNavigate: (page: PageId) => void;
@@ -1558,8 +1882,12 @@ function Header({
   updateStatus: UpdateStatus;
   update: Update | null;
   updateProgress: string | null;
+  serverPackageStatus: ServerPackageStatus | null;
+  serverPackageCheckStatus: ServerPackageCheckStatus;
   onCheckUpdate: () => void;
   onOpenUpdate: () => void;
+  onCheckServerPackage: () => void;
+  onUpdateServerPackage: () => void;
 }) {
   return (
     <Flex asChild align="center" justify="between" p="4">
@@ -1575,14 +1903,47 @@ function Header({
             serverCount={serverCount}
           />
         </Flex>
-        <UpdateHeaderControl
-          status={updateStatus}
-          update={update}
-          progress={updateProgress}
-          onCheck={onCheckUpdate}
-          onOpenUpdate={onOpenUpdate}
-        />
+        <Flex align="center" gap="2" wrap="wrap" justify="end">
+          <ServerPackageHeaderControl
+            status={serverPackageCheckStatus}
+            packageStatus={serverPackageStatus}
+            onCheck={onCheckServerPackage}
+            onUpdate={onUpdateServerPackage}
+          />
+          <UpdateHeaderControl
+            status={updateStatus}
+            update={update}
+            progress={updateProgress}
+            onCheck={onCheckUpdate}
+            onOpenUpdate={onOpenUpdate}
+          />
+        </Flex>
       </header>
+    </Flex>
+  );
+}
+
+function ServerPackageHeaderControl({
+  status,
+  packageStatus,
+  onCheck,
+  onUpdate,
+}: {
+  status: ServerPackageCheckStatus;
+  packageStatus: ServerPackageStatus | null;
+  onCheck: () => void;
+  onUpdate: () => void;
+}) {
+  const busy = status === "checking" || status === "updating";
+  const canUpdate = status === "available" || status === "missing" || (packageStatus ? !packageStatus.complete : false);
+  return (
+    <Flex align="center" gap="2" className="header-update">
+      <Badge color={serverPackageTone(status)} variant="soft">
+        {serverPackageLabel(status, packageStatus)}
+      </Badge>
+      <Button size="1" variant="surface" disabled={busy} onClick={canUpdate ? onUpdate : onCheck}>
+        {busy ? "Working..." : canUpdate ? "Update package" : "Check package"}
+      </Button>
     </Flex>
   );
 }
@@ -1665,6 +2026,8 @@ function ServersPage({
   remoteComponentRestartBusy,
   remoteStatusErrors,
   remoteBusy,
+  serverPackageStatus,
+  proxmoxVmStatuses,
   tunnels,
   tunnelBusy,
   onAddLocalServer,
@@ -1677,8 +2040,13 @@ function ServersPage({
   onRefreshRemoteStatus,
   onStartRemoteBattlegroup,
   onStopRemoteBattlegroup,
+  onUpdateRemoteBattlegroup,
+  onRefreshProxmoxVm,
+  onStartProxmoxVm,
+  onStopProxmoxVm,
   onStartLocalBattlegroup,
   onStopLocalBattlegroup,
+  onUpdateLocalBattlegroup,
   onStartTunnel,
   onStopTunnel,
   onOpenTunnel,
@@ -1698,6 +2066,8 @@ function ServersPage({
   remoteComponentRestartBusy: Record<string, boolean>;
   remoteStatusErrors: Record<string, string>;
   remoteBusy: Record<string, string>;
+  serverPackageStatus: ServerPackageStatus | null;
+  proxmoxVmStatuses: Record<string, ProxmoxVmStatus>;
   tunnels: Record<string, ServerTunnelStatus>;
   tunnelBusy: Record<string, boolean>;
   onAddLocalServer: () => void;
@@ -1710,8 +2080,13 @@ function ServersPage({
   onRefreshRemoteStatus: (server: RemoteServerRecord) => void;
   onStartRemoteBattlegroup: (server: RemoteServerRecord) => void;
   onStopRemoteBattlegroup: (server: RemoteServerRecord) => void;
+  onUpdateRemoteBattlegroup: (server: RemoteServerRecord) => void;
+  onRefreshProxmoxVm: (server: RemoteServerRecord) => void;
+  onStartProxmoxVm: (server: RemoteServerRecord) => void;
+  onStopProxmoxVm: (server: RemoteServerRecord) => void;
   onStartLocalBattlegroup: (server: DuneVmCandidate) => void;
   onStopLocalBattlegroup: (server: DuneVmCandidate) => void;
+  onUpdateLocalBattlegroup: (server: DuneVmCandidate) => void;
   onStartTunnel: (request: ServerTunnelStartRequest) => void;
   onStopTunnel: (tunnelId: string) => void;
   onOpenTunnel: (tunnel: ServerTunnelStatus) => void;
@@ -1750,6 +2125,7 @@ function ServersPage({
                     compact
                     runtime={localRuntimes[localServerKey(candidate)]}
                     runtimeError={localRuntimeErrors[localServerKey(candidate)]}
+                    packageStatus={serverPackageStatus}
                     componentLogs={remoteComponentLogs}
                     componentLogBusy={remoteComponentLogBusy}
                     componentRestartBusy={remoteComponentRestartBusy}
@@ -1762,6 +2138,7 @@ function ServersPage({
                     onStop={() => onStopLocalServer(candidate)}
                     onStartBattlegroup={() => onStartLocalBattlegroup(candidate)}
                     onStopBattlegroup={() => onStopLocalBattlegroup(candidate)}
+                    onUpdateBattlegroup={() => onUpdateLocalBattlegroup(candidate)}
                     onStartTunnel={onStartTunnel}
                     onStopTunnel={onStopTunnel}
                     onOpenTunnel={onOpenTunnel}
@@ -1775,11 +2152,13 @@ function ServersPage({
                     server={server}
                     compact
                     status={remoteStatuses[server.id]}
+                    proxmoxVmStatus={proxmoxVmStatuses[server.id]}
                     components={remoteComponents[server.id] ?? []}
                     componentLogs={remoteComponentLogs}
                     componentLogBusy={remoteComponentLogBusy}
                     componentRestartBusy={remoteComponentRestartBusy}
                     statusError={remoteStatusErrors[server.id]}
+                    packageStatus={serverPackageStatus}
                     busyLabel={remoteBusy[server.id]}
                     tunnels={tunnels}
                     tunnelBusy={tunnelBusy}
@@ -1787,6 +2166,10 @@ function ServersPage({
                     onRefresh={() => onRefreshRemoteStatus(server)}
                     onStartBattlegroup={() => onStartRemoteBattlegroup(server)}
                     onStopBattlegroup={() => onStopRemoteBattlegroup(server)}
+                    onUpdateBattlegroup={() => onUpdateRemoteBattlegroup(server)}
+                    onRefreshProxmoxVm={() => onRefreshProxmoxVm(server)}
+                    onStartProxmoxVm={() => onStartProxmoxVm(server)}
+                    onStopProxmoxVm={() => onStopProxmoxVm(server)}
                     onStartTunnel={onStartTunnel}
                     onStopTunnel={onStopTunnel}
                     onOpenTunnel={onOpenTunnel}
@@ -1813,6 +2196,7 @@ function ServerCard({
   compact = false,
   runtime,
   runtimeError,
+  packageStatus,
   componentLogs,
   componentLogBusy,
   componentRestartBusy,
@@ -1825,6 +2209,7 @@ function ServerCard({
   onStop,
   onStartBattlegroup,
   onStopBattlegroup,
+  onUpdateBattlegroup,
   onStartTunnel,
   onStopTunnel,
   onOpenTunnel,
@@ -1835,6 +2220,7 @@ function ServerCard({
   compact?: boolean;
   runtime?: LocalHyperVRuntime;
   runtimeError?: string;
+  packageStatus: ServerPackageStatus | null;
   componentLogs: Record<string, string>;
   componentLogBusy: Record<string, boolean>;
   componentRestartBusy: Record<string, boolean>;
@@ -1847,6 +2233,7 @@ function ServerCard({
   onStop?: () => void;
   onStartBattlegroup?: () => void;
   onStopBattlegroup?: () => void;
+  onUpdateBattlegroup?: () => void;
   onStartTunnel?: (request: ServerTunnelStartRequest) => void;
   onStopTunnel?: (tunnelId: string) => void;
   onOpenTunnel?: (tunnel: ServerTunnelStatus) => void;
@@ -1861,6 +2248,8 @@ function ServerCard({
   const canStart = vm.state === "off" || vm.state === "saved" || vm.state === "paused";
   const canStop = vm.state === "running" || vm.state === "starting" || vm.state === "paused";
   const battlegroup = runtime?.status?.battlegroup;
+  const guestPackage = runtime?.status?.package;
+  const serverUpdateRequired = serverPackageUpdateRequired(guestPackage, packageStatus);
   const battlegroupStarted = battlegroup ? isBattlegroupStarted(battlegroup) : false;
   const battlegroupStartRequested = battlegroup ? !battlegroup.stop : false;
   const battlegroupStopped = battlegroup ? battlegroup.stop : false;
@@ -1960,9 +2349,17 @@ function ServerCard({
         <Metric label="Switch" value={vm.switchNames.join(", ") || "none"} />
         <Metric label="Uptime" value={formatDuration(vm.uptimeSeconds)} />
       </Grid>
+      <ServerPackageCardStatus guestPackage={guestPackage} packageStatus={packageStatus} />
       {runtimeError ? (
         <Box className="server-error" mt="3">
           <Text size="2">{runtimeError}</Text>
+        </Box>
+      ) : null}
+      {packageStatus?.updateAvailable ? (
+        <Box className="setup-guide" mt="3">
+          <Text size="2">
+            Server package build {packageStatus.latestBuildId || "latest"} is available. Stop the BattleGroup fully before updating this VM.
+          </Text>
         </Box>
       ) : null}
       {runtime && battlegroup ? (
@@ -2018,6 +2415,17 @@ function ServerCard({
           >
             Stop BattleGroup
           </Button>
+          {serverUpdateRequired ? (
+            <Button
+              size="2"
+              color="amber"
+              variant="solid"
+              disabled={busy || !runtime || !packageStatus?.complete}
+              onClick={onUpdateBattlegroup}
+            >
+              Update Server
+            </Button>
+          ) : null}
           <Button size="1" variant="surface" disabled={busy || !canStart} onClick={onStart}>
             Start VM
           </Button>
@@ -2040,7 +2448,9 @@ function RemoteServerCard({
   compact = false,
   onRemove,
   status,
+  proxmoxVmStatus,
   components,
+  packageStatus,
   componentLogs,
   componentLogBusy,
   componentRestartBusy,
@@ -2051,6 +2461,10 @@ function RemoteServerCard({
   onRefresh,
   onStartBattlegroup,
   onStopBattlegroup,
+  onUpdateBattlegroup,
+  onRefreshProxmoxVm,
+  onStartProxmoxVm,
+  onStopProxmoxVm,
   onStartTunnel,
   onStopTunnel,
   onOpenTunnel,
@@ -2061,7 +2475,9 @@ function RemoteServerCard({
   compact?: boolean;
   onRemove?: () => void;
   status?: RemoteServerStatus;
+  proxmoxVmStatus?: ProxmoxVmStatus;
   components: RemoteServerComponent[];
+  packageStatus: ServerPackageStatus | null;
   componentLogs: Record<string, string>;
   componentLogBusy: Record<string, boolean>;
   componentRestartBusy: Record<string, boolean>;
@@ -2072,6 +2488,10 @@ function RemoteServerCard({
   onRefresh?: () => void;
   onStartBattlegroup?: () => void;
   onStopBattlegroup?: () => void;
+  onUpdateBattlegroup?: () => void;
+  onRefreshProxmoxVm?: () => void;
+  onStartProxmoxVm?: () => void;
+  onStopProxmoxVm?: () => void;
   onStartTunnel?: (request: ServerTunnelStartRequest) => void;
   onStopTunnel?: (tunnelId: string) => void;
   onOpenTunnel?: (tunnel: ServerTunnelStatus) => void;
@@ -2079,6 +2499,8 @@ function RemoteServerCard({
   onRestartComponent?: (component: RemoteServerComponent) => void;
 }) {
   const liveStatus = statusError ? undefined : status;
+  const guestPackage = liveStatus?.package;
+  const serverUpdateRequired = serverPackageUpdateRequired(guestPackage, packageStatus);
   const liveComponents = liveStatus ? components : [];
   const battlegroupStarted = liveStatus ? isBattlegroupStarted(liveStatus.battlegroup) : false;
   const battlegroupStartRequested = liveStatus ? !liveStatus.battlegroup.stop : false;
@@ -2161,7 +2583,25 @@ function RemoteServerCard({
         <Metric label="BattleGroup" value={server.battlegroupName || "pending"} />
         <Metric label="Type" value={server.type === "alpine" ? "Alpine VM over SSH" : "Ubuntu over SSH"} />
         <Metric label="Created" value={new Date(server.createdAt).toLocaleString()} />
+        {server.provisioner ? <Metric label="Proxmox VM" value={`${server.provisioner.node}/${server.provisioner.vmid}`} /> : null}
       </Grid>
+      {server.provisioner ? (
+        <Flex align="center" gap="2" mt="3" wrap="wrap">
+          <Badge color={proxmoxVmStatus?.status === "running" ? "green" : "gray"} variant="surface">
+            VM {proxmoxVmStatus?.status || "unknown"}
+          </Badge>
+          <Button size="1" variant="surface" disabled={busy} onClick={onRefreshProxmoxVm}>
+            VM Status
+          </Button>
+          <Button size="1" variant="surface" disabled={busy || proxmoxVmStatus?.status === "running"} onClick={onStartProxmoxVm}>
+            Start VM
+          </Button>
+          <Button size="1" variant="surface" disabled={busy || proxmoxVmStatus?.status === "stopped"} onClick={onStopProxmoxVm}>
+            Stop VM
+          </Button>
+        </Flex>
+      ) : null}
+      <ServerPackageCardStatus guestPackage={guestPackage} packageStatus={packageStatus} />
       {busyLabel ? (
         <Flex align="center" gap="2" mt="3">
           <BusySpinner />
@@ -2173,6 +2613,13 @@ function RemoteServerCard({
       {statusError ? (
         <Box className="server-error" mt="3">
           <Text size="2">{statusError}</Text>
+        </Box>
+      ) : null}
+      {packageStatus?.updateAvailable ? (
+        <Box className="setup-guide" mt="3">
+          <Text size="2">
+            Server package build {packageStatus.latestBuildId || "latest"} is available. Stop the BattleGroup fully before updating this server.
+          </Text>
         </Box>
       ) : null}
       <Box className="server-state" mt="3">
@@ -2239,6 +2686,17 @@ function RemoteServerCard({
             >
               Stop BattleGroup
             </Button>
+            {serverUpdateRequired ? (
+              <Button
+                size="2"
+                color="amber"
+                variant="solid"
+                disabled={busy || !liveStatus}
+                onClick={onUpdateBattlegroup}
+              >
+                Update Server
+              </Button>
+            ) : null}
           </Flex>
           {busyLabel ? (
             <Text size="1" color="gray" className="mono">
@@ -2634,6 +3092,55 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ServerPackageCardStatus({
+  guestPackage,
+  packageStatus,
+}: {
+  guestPackage?: RemoteServerPackageStatus;
+  packageStatus: ServerPackageStatus | null;
+}) {
+  if (!guestPackage && !packageStatus) return null;
+  const installed = guestPackage?.installedBuildId || null;
+  const latest = packageStatus?.latestBuildId || packageStatus?.installedBuildId || null;
+  const downloadedImage = guestPackage?.battlegroupVersion || null;
+  const liveImage = guestPackage?.liveBattlegroupVersion || null;
+  const updateRequired = Boolean(installed && latest && installed !== latest);
+  const tone = !installed ? "amber" : updateRequired ? "amber" : "green";
+  const label = !installed ? "Build unknown" : updateRequired ? "Update required" : "Current";
+  return (
+    <Flex align="center" gap="2" mt="3" wrap="wrap">
+      <Metric label="Server Package" value={installed || "unknown"} />
+      <Badge color={tone} variant="surface">
+        {label}
+      </Badge>
+      {latest ? (
+        <Text size="1" color="gray" className="mono">
+          latest {latest}
+        </Text>
+      ) : null}
+      {downloadedImage ? (
+        <Text size="1" color="gray" className="mono">
+          images {downloadedImage}
+        </Text>
+      ) : null}
+      {liveImage && liveImage !== downloadedImage ? (
+        <Text size="1" color="gray" className="mono">
+          live {liveImage}
+        </Text>
+      ) : null}
+    </Flex>
+  );
+}
+
+function serverPackageUpdateRequired(
+  guestPackage: RemoteServerPackageStatus | undefined,
+  packageStatus: ServerPackageStatus | null,
+): boolean {
+  const installed = guestPackage?.installedBuildId?.trim();
+  const latest = (packageStatus?.latestBuildId || packageStatus?.installedBuildId || "").trim();
+  return Boolean(installed && latest && installed !== latest);
+}
+
 function EmptyState({ title, body }: { title: string; body: string }) {
   return (
     <Box className="empty-state">
@@ -2722,9 +3229,15 @@ function InstallControls({
   vmDestinationHasVm,
   remotePreflight,
   remotePreflightStatus,
+  proxmoxDetection,
+  proxmoxDetectionStatus,
+  serverPackageStatus,
+  serverPackageCheckStatus,
   update,
+  onUpdateServerPackage,
   onLocalDetection,
   onRemotePreflight,
+  onProxmoxDetection,
   onStart,
 }: {
   form: SetupForm;
@@ -2740,13 +3253,23 @@ function InstallControls({
   vmDestinationHasVm: boolean;
   remotePreflight: UbuntuSshPreflight | null;
   remotePreflightStatus: DetectionState;
+  proxmoxDetection: ProxmoxDetection | null;
+  proxmoxDetectionStatus: DetectionState;
+  serverPackageStatus: ServerPackageStatus | null;
+  serverPackageCheckStatus: ServerPackageCheckStatus;
   update: <K extends keyof SetupForm>(key: K, value: SetupForm[K]) => void;
+  onUpdateServerPackage: () => void;
   onLocalDetection: () => void;
   onRemotePreflight: () => void;
+  onProxmoxDetection: () => void;
   onStart: () => void;
 }) {
   const deepDesertEnabled = layoutPreview.deepDesertTotal > 0;
   const warmOptions = zeroTo(layoutPreview.deepDesertTotal);
+  const vmMemoryGb =
+    form.setupTarget === "proxmox"
+      ? effectiveProxmoxVmMemoryGb(form, calculatedMemory, proxmoxDetection)
+      : effectiveVmMemoryGb(form, calculatedMemory);
   const requirements =
     form.setupTarget === "ubuntu"
       ? remoteSetupRequirementStatus(
@@ -2756,6 +3279,16 @@ function InstallControls({
           remotePreflight,
           form.enableSwap,
         )
+      : form.setupTarget === "proxmox"
+        ? proxmoxSetupRequirementStatus(
+            calculatedMemory,
+            vmMemoryGb,
+            form.diskGb,
+            form.processorCount,
+            form.proxmoxNode,
+            form.proxmoxVmStorage,
+            proxmoxDetection,
+          )
       : setupRequirementStatus(
           calculatedMemory,
           form.vmMemoryGb,
@@ -2766,14 +3299,46 @@ function InstallControls({
           driveCandidates,
         );
   const hasServiceToken = form.tokenSource.trim().length > 0;
+  const setupNeedsServerPackage = form.setupTarget === "hyperv" || form.setupTarget === "proxmox";
+  const serverPackageCurrent =
+    !!serverPackageStatus?.complete &&
+    !serverPackageStatus.updateAvailable &&
+    serverPackageCheckStatus === "current";
+  const serverPackageBusy =
+    serverPackageCheckStatus === "checking" || serverPackageCheckStatus === "updating";
+  const packageBlocksSetup =
+    setupNeedsServerPackage &&
+    !serverPackageCurrent &&
+    (serverPackageCheckStatus === "idle" ||
+      serverPackageCheckStatus === "failed" ||
+      serverPackageBusy ||
+      !serverPackageStatus?.complete ||
+      !!serverPackageStatus.updateAvailable);
+  const packageActionLabel =
+    serverPackageCheckStatus === "checking"
+      ? "Checking..."
+      : serverPackageCheckStatus === "updating"
+        ? "Updating..."
+        : serverPackageCheckStatus === "available" || serverPackageCheckStatus === "missing"
+          ? "Update package"
+          : "Check package";
   const setupIssues =
     form.setupTarget === "ubuntu"
       ? remoteSetupBlockingIssues(requirements, hasServiceToken, form, remotePreflight)
+      : form.setupTarget === "proxmox"
+        ? proxmoxSetupBlockingIssues(requirements, hasServiceToken, form, proxmoxDetection)
       : setupBlockingIssues(environmentGate, requirements, hasServiceToken, vmDestinationHasVm, form);
-  const canStart = setupIssues.length === 0;
+  const visibleSetupIssues = setupIssueSummary(form.setupTarget, setupIssues, proxmoxDetection);
+  const canStart = setupIssues.length === 0 && !packageBlocksSetup;
   const hypervDetectionReady = networkDetection === "ready" && environmentGate.canContinue;
   const ubuntuDetectionReady = remotePreflightStatus === "ready" && !!remotePreflight;
-  const flowDetectionReady = form.setupTarget === "ubuntu" ? ubuntuDetectionReady : hypervDetectionReady;
+  const proxmoxDetectionReady = proxmoxDetectionStatus === "ready" && !!proxmoxDetection;
+  const flowDetectionReady =
+    form.setupTarget === "ubuntu"
+      ? ubuntuDetectionReady
+      : form.setupTarget === "proxmox"
+        ? proxmoxDetectionReady
+        : hypervDetectionReady;
 
   return (
     <Card size="3" variant="surface" className="pane setup-pane">
@@ -2802,6 +3367,9 @@ function InstallControls({
                     if (target === "ubuntu") {
                       update("playerIpMode", "external");
                       update("playerIp", form.playerIp || form.remoteHost);
+                    } else if (target === "proxmox") {
+                      update("networkMode", "dhcp");
+                      update("playerIpMode", "external");
                     }
                   }}
                 >
@@ -2823,9 +3391,45 @@ function InstallControls({
                     server so setup cannot conflict with existing workloads or data.
                   </Text>
                 </Box>
+              ) : form.setupTarget === "proxmox" ? (
+                <Box className="destructive-warning" mt="3">
+                  <Text as="div" size="2" weight="medium">
+                    Proxmox setup creates a new VM and uploads a converted vendor disk image.
+                  </Text>
+                  <Text as="p" size="2" color="gray">
+                    Use a dedicated VMID and storage target. The guest boots with DHCP first, then optional static
+                    networking is applied after SSH is reachable.
+                  </Text>
+                </Box>
               ) : null}
             </SetupSection>
 
+            {packageBlocksSetup ? (
+              <Box className="setup-package-gate">
+                <Flex align="center" justify="between" gap="3" wrap="wrap">
+                  <Box minWidth="0">
+                    <Text as="div" size="2" weight="medium">
+                      Server package update required
+                    </Text>
+                    <Text as="div" size="2" color="gray">
+                      {serverPackageStatus?.message || "Check the Dune server package before continuing."}
+                    </Text>
+                  </Box>
+                  <Button
+                    size="2"
+                    color={serverPackageCheckStatus === "failed" ? "red" : "amber"}
+                    variant="surface"
+                    disabled={serverPackageBusy}
+                    onClick={onUpdateServerPackage}
+                  >
+                    {packageActionLabel}
+                  </Button>
+                </Flex>
+              </Box>
+            ) : null}
+
+            <Box className={packageBlocksSetup ? "is-flow-disabled" : ""}>
+              <Flex direction="column" gap="5">
             <SetupSection
               icon={GlobeIcon}
               title="World"
@@ -2962,14 +3566,14 @@ function InstallControls({
               <Flex align="start" justify="between" gap="4">
                 <Box>
                   <Text as="div" size="2" weight="medium">
-                    {form.setupTarget === "ubuntu" ? "Required memory" : "VM memory"}
+                    Required memory
                   </Text>
                   <Text as="div" size="2" color="gray">
                     Derived from the selected world layout.
                   </Text>
                 </Box>
                 <Text size="7" weight="bold" color="bronze">
-                  {form.setupTarget === "ubuntu" ? calculatedMemory.gb : effectiveVmMemoryGb(form, calculatedMemory)} GB
+                  {calculatedMemory.gb} GB
                 </Text>
               </Flex>
               <InlineRequirement
@@ -2984,18 +3588,18 @@ function InstallControls({
                   </Text>
                 ))}
               </Flex>
-              {form.setupTarget === "hyperv" ? (
+              {form.setupTarget !== "ubuntu" ? (
                 <>
                   <Separator size="4" my="3" />
                   <FormRow label="VM Memory">
                     <TextField.Root
-                      value={String(effectiveVmMemoryGb(form, calculatedMemory))}
+                      value={String(vmMemoryGb)}
                       onChange={(event) => update("vmMemoryGb", event.target.value)}
                     >
                       <TextField.Slot side="right">GB</TextField.Slot>
                     </TextField.Root>
                     <Text as="div" size="2" color="gray" mt="2">
-                      Minimum for this layout is {calculatedMemory.gb} GB. You can increase it, but not decrease below the layout requirement.
+                      {proxmoxMemoryLimitText(form, calculatedMemory, proxmoxDetection)}
                     </Text>
                   </FormRow>
                   <FormRow label="CPU Cores">
@@ -3008,6 +3612,37 @@ function InstallControls({
                       text={`${requirements.processorRequired}; ${requirements.processorAvailable}`}
                     />
                   </FormRow>
+                  {form.setupTarget === "proxmox" ? (
+                    <>
+                      <Separator size="4" my="3" />
+                      <Flex align="center" justify="between" gap="3">
+                        <Box>
+                          <Text as="div" size="2" weight="medium">
+                            Experimental guest swap
+                          </Text>
+                          <Text as="div" size="2" color="gray">
+                            Enable the existing Alpine swap profile after bootstrap.
+                          </Text>
+                        </Box>
+                        <Switch checked={form.enableSwap} onCheckedChange={(value) => update("enableSwap", value)} />
+                      </Flex>
+                      <Separator size="4" my="3" />
+                      <Flex align="center" justify="between" gap="3">
+                        <Box>
+                          <Text as="div" size="2" weight="medium">
+                            QEMU guest agent
+                          </Text>
+                          <Text as="div" size="2" color="gray">
+                            Install and start qemu-guest-agent inside the Proxmox Alpine VM.
+                          </Text>
+                        </Box>
+                        <Switch
+                          checked={form.proxmoxInstallQemuGuestAgent}
+                          onCheckedChange={(value) => update("proxmoxInstallQemuGuestAgent", value)}
+                        />
+                      </Flex>
+                    </>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -3114,7 +3749,7 @@ function InstallControls({
                 </Flex>
               </Flex>
             </SetupSection>
-            ) : (
+            ) : form.setupTarget === "ubuntu" ? (
             <SetupSection icon={DesktopIcon} title="Remote Ubuntu Host" className="setup-order-remote-host">
               <Flex direction="column" gap="2">
                 <UbuntuSetupGuide />
@@ -3188,6 +3823,126 @@ function InstallControls({
               {remotePreflight ? (
                 <RemotePreflightSummary preflight={remotePreflight} />
               ) : null}
+            </SetupSection>
+            ) : (
+            <SetupSection icon={DesktopIcon} title="Proxmox Connection" className="setup-order-remote-host">
+              <Flex direction="column" gap="2">
+                <Grid columns="2" gap="3">
+                  <Field label="Host URL">
+                    <TextField.Root
+                      placeholder="https://proxmox.example.local:8006"
+                      value={form.proxmoxHostUrl}
+                      onChange={(event) => update("proxmoxHostUrl", event.target.value)}
+                    />
+                  </Field>
+                  <Field label="API Token ID">
+                    <TextField.Root
+                      placeholder="root@pam!dune-manager"
+                      value={form.proxmoxTokenId}
+                      onChange={(event) => update("proxmoxTokenId", event.target.value)}
+                    />
+                  </Field>
+                </Grid>
+                <Field label="API Token Secret">
+                  <TextField.Root
+                    type="password"
+                    placeholder="Stored in the OS credential store after detection"
+                    value={form.proxmoxTokenSecret}
+                    onChange={(event) => update("proxmoxTokenSecret", event.target.value)}
+                  />
+                </Field>
+                <Button
+                  type="button"
+                  variant="surface"
+                  className="setup-detect-button"
+                  onClick={onProxmoxDetection}
+                  disabled={
+                    proxmoxDetectionStatus === "detecting" ||
+                    !form.proxmoxHostUrl.trim() ||
+                    !form.proxmoxTokenId.trim() ||
+                    (!form.proxmoxTokenSecret.trim() && !form.proxmoxAcceptedCertificateSha256.trim())
+                  }
+                >
+                  {proxmoxDetectionStatus === "detecting" ? "Detecting..." : proxmoxDetection ? "Refresh Proxmox resources" : "Detect Proxmox resources"}
+                </Button>
+                {proxmoxDetection ? (
+                  <ProxmoxDetectionSummary detection={proxmoxDetection} />
+                ) : null}
+                {!proxmoxDetectionReady ? (
+                  <Box className="setup-guide">
+                    <Text size="2">
+                      Run Proxmox resource detection before selecting node, storage, bridge, and VMID.
+                    </Text>
+                  </Box>
+                ) : null}
+                <Box className={proxmoxDetectionReady ? "" : "is-flow-disabled"} aria-disabled={!proxmoxDetectionReady}>
+                  <Flex direction="column" gap="3">
+                    <Grid columns="2" gap="3">
+                      <Field label="Node">
+                        <Select.Root value={form.proxmoxNode} onValueChange={(value) => update("proxmoxNode", value)}>
+                          <Select.Trigger />
+                          <Select.Content>
+                            {(proxmoxDetection?.nodes ?? []).map((node) => (
+                              <Select.Item key={node.node} value={node.node}>{node.node}</Select.Item>
+                            ))}
+                          </Select.Content>
+                        </Select.Root>
+                      </Field>
+                      <Field label="VMID">
+                        <TextField.Root value={form.proxmoxVmid} onChange={(event) => update("proxmoxVmid", event.target.value)} />
+                      </Field>
+                      <Field label="VM storage">
+                        <Select.Root value={form.proxmoxVmStorage} onValueChange={(value) => update("proxmoxVmStorage", value)}>
+                          <Select.Trigger />
+                          <Select.Content>
+                            {(proxmoxDetection?.storages ?? []).filter((storage) => storage.content.includes("images")).map((storage) => (
+                              <Select.Item key={storage.storage} value={storage.storage}>{storage.storage}</Select.Item>
+                            ))}
+                          </Select.Content>
+                        </Select.Root>
+                      </Field>
+                      <Field label="Import storage">
+                        <Select.Root value={form.proxmoxImportStorage} onValueChange={(value) => update("proxmoxImportStorage", value)}>
+                          <Select.Trigger />
+                          <Select.Content>
+                            {(proxmoxDetection?.storages ?? []).map((storage) => (
+                              <Select.Item key={storage.storage} value={storage.storage}>{storage.storage}</Select.Item>
+                            ))}
+                          </Select.Content>
+                        </Select.Root>
+                      </Field>
+                    </Grid>
+                    <Field label="Bridge">
+                      <Select.Root
+                        value={form.proxmoxBridge}
+                        onValueChange={(value) => {
+                          update("proxmoxBridge", value);
+                          const bridge = proxmoxDetection?.bridges.find((item) => item.iface === value);
+                          if (bridge?.cidr) update("proxmoxBridgeCidr", bridge.cidr);
+                        }}
+                      >
+                        <Select.Trigger />
+                        <Select.Content>
+                          {(proxmoxDetection?.bridges ?? []).map((bridge) => (
+                            <Select.Item key={bridge.iface} value={bridge.iface}>{bridge.iface}</Select.Item>
+                          ))}
+                        </Select.Content>
+                      </Select.Root>
+                    </Field>
+                    <FormRow label="Save Server">
+                      <Flex align="center" gap="3" className="checkbox-copy-row">
+                        <Checkbox
+                          checked={form.saveRemoteServer}
+                          onCheckedChange={(value) => update("saveRemoteServer", value === true)}
+                        />
+                        <Text size="2" color="gray">
+                          Add this Proxmox Alpine server to Servers when setup starts
+                        </Text>
+                      </Flex>
+                    </FormRow>
+                  </Flex>
+                </Box>
+              </Flex>
             </SetupSection>
             )}
 
@@ -3302,7 +4057,7 @@ function InstallControls({
               </Field>
               {form.playerIpMode === "external" ? <PortForwardingNotice /> : null}
             </SetupSection>
-            ) : (
+            ) : form.setupTarget === "ubuntu" ? (
             <SetupSection icon={MixIcon} title="Network" className="setup-order-network" disabled={!ubuntuDetectionReady}>
               <Field label="Player-facing IP">
                 <Grid columns="160px 1fr" gap="3">
@@ -3334,8 +4089,63 @@ function InstallControls({
               </Field>
               {form.playerIpMode === "external" ? <PortForwardingNotice /> : null}
             </SetupSection>
+            ) : (
+            <SetupSection icon={MixIcon} title="Network" className="setup-order-network" disabled={!proxmoxDetectionReady}>
+              <Field label="Guest network mode">
+                <TextField.Root value="DHCP First Static Internal IP" readOnly />
+              </Field>
+              <Grid columns="3" gap="3">
+                <Field label="Static IP">
+                  <TextField.Root
+                    placeholder="Required"
+                    value={form.staticIp}
+                    onChange={(event) => update("staticIp", event.target.value)}
+                  />
+                </Field>
+                <Field label="Gateway">
+                  <TextField.Root
+                    placeholder="Required"
+                    value={form.gateway}
+                    onChange={(event) => update("gateway", event.target.value)}
+                  />
+                </Field>
+                <Field label="DNS">
+                  <TextField.Root
+                    placeholder="Required"
+                    value={form.dns}
+                    onChange={(event) => update("dns", event.target.value)}
+                  />
+                </Field>
+              </Grid>
+              <Field label="Player-facing IP">
+                <Grid columns="160px 1fr" gap="3">
+                  <Select.Root
+                    value={form.playerIpMode}
+                    onValueChange={(value) => {
+                      const mode = value as PlayerIpMode;
+                      update("playerIpMode", mode);
+                      update("playerIp", mode === "local" ? form.staticIp : form.playerIp);
+                    }}
+                  >
+                    <Select.Trigger />
+                    <Select.Content>
+                      <Select.Item value="local">Local IP</Select.Item>
+                      <Select.Item value="external">External IP</Select.Item>
+                    </Select.Content>
+                  </Select.Root>
+                  <TextField.Root
+                    placeholder="Address players use to connect"
+                    value={form.playerIp}
+                    onChange={(event) => update("playerIp", event.target.value)}
+                  />
+                </Grid>
+              </Field>
+              {form.playerIpMode === "external" ? <PortForwardingNotice /> : null}
+            </SetupSection>
             )}
 
+              </Flex>
+            </Box>
           </Flex>
         </Box>
 
@@ -3347,9 +4157,13 @@ function InstallControls({
               <Text size="2" color="gray">
                 Ready to create one full setup plan.
               </Text>
+            ) : packageBlocksSetup && visibleSetupIssues.length === 0 ? (
+              <Text size="2" color="gray">
+                Resolve the server package update before setup can continue.
+              </Text>
             ) : (
               <ul className="setup-issues">
-                {setupIssues.map((issue) => (
+                {visibleSetupIssues.map((issue) => (
                   <li key={issue}>{issue}</li>
                 ))}
               </ul>
@@ -3444,6 +4258,60 @@ function remoteSetupRunRequest(form: SetupForm): RemoteSetupRunRequest {
   };
 }
 
+function proxmoxProfileId(form: Pick<SetupForm, "proxmoxHostUrl" | "proxmoxTokenId">): string {
+  return `${form.proxmoxHostUrl.trim().toLowerCase()}|${form.proxmoxTokenId.trim().toLowerCase()}`;
+}
+
+function proxmoxConnectionRequest(form: SetupForm) {
+  return {
+    profileId: proxmoxProfileId(form),
+    hostUrl: form.proxmoxHostUrl.trim(),
+    tokenId: form.proxmoxTokenId.trim(),
+    tokenSecret: form.proxmoxTokenSecret.trim() || undefined,
+    acceptedCertificateSha256: form.proxmoxAcceptedCertificateSha256.trim() || undefined,
+  };
+}
+
+function proxmoxVmActionRequest(provisioner: ProxmoxProvisioner) {
+  return {
+    profileId: provisioner.profileId,
+    hostUrl: provisioner.hostUrl,
+    tokenId: provisioner.tokenId,
+    acceptedCertificateSha256: provisioner.acceptedCertificateSha256,
+    node: provisioner.node,
+    vmid: provisioner.vmid,
+  };
+}
+
+function proxmoxSetupRunRequest(form: SetupForm, memoryGb: number) {
+  return {
+    ...proxmoxConnectionRequest(form),
+    node: form.proxmoxNode.trim(),
+    vmStorage: form.proxmoxVmStorage.trim(),
+    importStorage: form.proxmoxImportStorage.trim(),
+    bridge: form.proxmoxBridge.trim(),
+    bridgeCidr: form.proxmoxBridgeCidr.trim() || undefined,
+    vmid: parsePositiveInt(form.proxmoxVmid),
+    vmName: form.vmName.trim(),
+    diskGb: Math.max(1, parsePositiveInt(form.diskGb)),
+    memoryGb,
+    processorCount: effectiveProcessorCount(form),
+    staticIp: form.staticIp.trim(),
+    gateway: form.gateway.trim(),
+    dns: form.dns.trim(),
+    playerIp: form.playerIp.trim(),
+    worldName: form.worldName,
+    region: form.region,
+    selfHostToken: form.tokenSource,
+    survivalInstances: Math.max(1, parsePositiveInt(form.survivalInstances)),
+    deepDesertPveInstances: parsePositiveInt(form.deepDesertPveInstances),
+    deepDesertPvpInstances: parsePositiveInt(form.deepDesertPvpInstances),
+    deepDesertWarmServers: parsePositiveInt(form.deepDesertWarmServers),
+    enableSwap: form.enableSwap,
+    installQemuGuestAgent: form.proxmoxInstallQemuGuestAgent,
+  };
+}
+
 function remoteServerDraftFromForm(form: SetupForm): RemoteServerRecord {
   const host = form.remoteHost.trim();
   return remoteServerPlaceholder({
@@ -3452,6 +4320,54 @@ function remoteServerDraftFromForm(form: SetupForm): RemoteServerRecord {
     keyPath: form.remoteKeyPath.trim(),
     createdAt: new Date().toISOString(),
   }, form.worldName.trim() || undefined, "Setup running");
+}
+
+function proxmoxProvisionerFromForm(form: SetupForm, result?: Partial<ProxmoxAlpineSetupResult>): ProxmoxProvisioner {
+  return {
+    type: "proxmox",
+    profileId: proxmoxProfileId(form),
+    hostUrl: form.proxmoxHostUrl.trim(),
+    tokenId: form.proxmoxTokenId.trim(),
+    acceptedCertificateSha256: form.proxmoxAcceptedCertificateSha256.trim() || undefined,
+    node: result?.node || form.proxmoxNode.trim(),
+    vmid: result?.vmid || parsePositiveInt(form.proxmoxVmid),
+    vmName: result?.vmName || form.vmName.trim(),
+  };
+}
+
+function proxmoxServerDraftFromForm(form: SetupForm): RemoteServerRecord {
+  const host = form.staticIp.trim() || form.proxmoxHostUrl.trim();
+  return remoteServerPlaceholder({
+    type: "alpine",
+    host,
+    createdAt: new Date().toISOString(),
+    provisioner: proxmoxProvisionerFromForm(form),
+  }, form.worldName.trim() || undefined, "Setup running");
+}
+
+function proxmoxServerRecordFromSetup(
+  form: SetupForm,
+  result: ProxmoxAlpineSetupResult,
+  existingId?: string,
+): RemoteServerRecord {
+  const profile = remoteServerPlaceholder({
+    type: "alpine",
+    host: result.host,
+    createdAt: new Date().toISOString(),
+    provisioner: proxmoxProvisionerFromForm(form, result),
+  });
+  return {
+    ...profile,
+    id: existingId || profile.id,
+    name: form.worldName.trim() || result.battlegroupName,
+    host: result.host,
+    user: result.user || "dune",
+    keyPath: "",
+    namespace: result.namespace,
+    battlegroupName: result.battlegroupName,
+    worldUniqueName: result.worldUniqueName,
+    phase: "Ready",
+  };
 }
 
 function remoteServerRecordFromSetup(
@@ -3494,6 +4410,7 @@ function remoteServerPlaceholder(
     worldUniqueName: "",
     phase,
     createdAt: profile.createdAt,
+    provisioner: profile.provisioner,
   };
 }
 
@@ -3506,6 +4423,7 @@ function remoteServerFromDetected(existing: RemoteServerRecord, detected: Remote
     keyPath: existing.keyPath,
     user: existing.user || remoteServerDefaultUser(existing.type),
     createdAt: existing.createdAt,
+    provisioner: existing.provisioner,
   };
 }
 
@@ -3569,11 +4487,27 @@ function persistRemoteServers(servers: RemoteServerRecord[]): RemoteServerRecord
         host: server.host,
         keyPath: server.type === "ubuntu" ? server.keyPath : undefined,
         createdAt: server.createdAt || new Date().toISOString(),
+        provisioner: server.provisioner,
       })),
     (profile) => remoteServerId(profile.type, profile.host, profile.keyPath || ""),
   );
   window.localStorage.setItem(remoteServersStorageKey, JSON.stringify(profiles));
   return servers;
+}
+
+function persistProxmoxProfile(profile: {
+  hostUrl: string;
+  tokenId: string;
+  acceptedCertificateSha256?: string;
+}) {
+  window.localStorage.setItem(
+    proxmoxProfileStorageKey,
+    JSON.stringify({
+      proxmoxHostUrl: profile.hostUrl,
+      proxmoxTokenId: profile.tokenId,
+      proxmoxAcceptedCertificateSha256: profile.acceptedCertificateSha256 || "",
+    }),
+  );
 }
 
 function localServerKey(server: DuneVmCandidate): string {
@@ -3682,7 +4616,20 @@ function remoteServerProfileFromStored(value: unknown): RemoteServerProfile | nu
     host: record.host,
     keyPath: typeof record.keyPath === "string" ? record.keyPath : "",
     createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date().toISOString(),
+    provisioner: isProxmoxProvisioner(record.provisioner) ? record.provisioner : undefined,
   };
+}
+
+function isProxmoxProvisioner(value: unknown): value is ProxmoxProvisioner {
+  if (!value || typeof value !== "object") return false;
+  const provisioner = value as Partial<ProxmoxProvisioner>;
+  return (
+    provisioner.type === "proxmox" &&
+    typeof provisioner.hostUrl === "string" &&
+    typeof provisioner.tokenId === "string" &&
+    typeof provisioner.node === "string" &&
+    typeof provisioner.vmid === "number"
+  );
 }
 
 function localServerProfileFromStored(value: unknown): LocalServerProfile | null {
@@ -3877,6 +4824,121 @@ function remoteSetupBlockingIssues(
   return issues;
 }
 
+function proxmoxSetupRequirementStatus(
+  calculatedMemory: CalculatedMemory,
+  effectiveMemoryGb: number,
+  diskGb: string,
+  processorCount: string,
+  nodeName: string,
+  storageName: string,
+  detection: ProxmoxDetection | null,
+): SetupRequirements {
+  const requiredMemoryBytes = effectiveMemoryGb * 1024 * 1024 * 1024;
+  const requiredProcessors = Math.max(0, parsePositiveInt(processorCount));
+  const requiredDiskGb = Math.max(0, parsePositiveInt(diskGb));
+  const requiredDiskBytes = requiredDiskGb * 1024 * 1024 * 1024;
+  const node = detection?.nodes.find((item) => item.node === nodeName.trim()) ?? detection?.nodes[0] ?? null;
+  const storage =
+    detection?.storages.find((item) => item.storage === storageName.trim()) ??
+    detection?.storages.find((item) => item.content.includes("images")) ??
+    detection?.storages[0] ??
+    null;
+  const availableMemoryBytes = node ? Math.max(0, node.maxmem - node.mem) : 0;
+  const processorsAvailable = node?.maxcpu ?? 0;
+  const storageAvailableBytes = storage?.avail ?? 0;
+  const memoryOk = !!node && effectiveMemoryGb > 0 && availableMemoryBytes >= requiredMemoryBytes;
+  const processorOk = !!node && requiredProcessors > 0 && requiredProcessors <= processorsAvailable;
+  const diskOk = !!storage && requiredDiskGb > 0 && storageAvailableBytes >= requiredDiskBytes;
+  const memoryRequired =
+    effectiveMemoryGb < calculatedMemory.gb
+      ? `${effectiveMemoryGb} GB required with swap profile (${calculatedMemory.gb} GB layout recommendation)`
+      : `${effectiveMemoryGb} GB required`;
+  return {
+    canContinue: memoryOk && processorOk && diskOk,
+    memoryOk,
+    processorOk,
+    diskOk,
+    memoryRequired,
+    memoryAvailable: node
+      ? `${formatGiBFloor1(availableMemoryBytes)} available on ${node.node} (${formatGiBFloor1(node.maxmem)} total)`
+      : "Run Proxmox detection",
+    processorRequired: `${requiredProcessors || "A positive number of"} cores configured`,
+    processorAvailable: node ? `${processorsAvailable} logical available on ${node.node}` : "Run Proxmox detection",
+    diskRequired: `${requiredDiskGb} GB virtual disk`,
+    diskAvailable: storage
+      ? `${storage.storage} has ${formatGiBFloor1(storageAvailableBytes)} free`
+      : "Run Proxmox detection and choose VM storage",
+  };
+}
+
+function proxmoxSetupBlockingIssues(
+  requirements: SetupRequirements,
+  hasServiceToken: boolean,
+  form: SetupForm,
+  detection: ProxmoxDetection | null,
+): string[] {
+  const issues: string[] = [];
+  if (!form.proxmoxHostUrl.trim()) issues.push("Proxmox host URL is required.");
+  if (!form.proxmoxTokenId.trim()) issues.push("Proxmox API token id is required.");
+  if (!form.proxmoxTokenSecret.trim() && !form.proxmoxAcceptedCertificateSha256.trim()) {
+    issues.push("Proxmox API token secret is required the first time this profile is used.");
+  }
+  if (!detection) issues.push("Run Proxmox resource detection before setup.");
+  if (!form.proxmoxNode.trim()) issues.push("Proxmox node is required.");
+  if (!form.proxmoxVmStorage.trim()) issues.push("VM storage is required.");
+  if (!form.proxmoxImportStorage.trim()) issues.push("Import storage is required.");
+  if (!form.proxmoxBridge.trim()) issues.push("Proxmox bridge is required.");
+  if (parsePositiveInt(form.proxmoxVmid) <= 0) issues.push("Proxmox VMID is required.");
+  if (!form.vmName.trim()) issues.push("VM name is required.");
+  if (!form.staticIp.trim()) issues.push("Static guest IP is required for Proxmox setup.");
+  if (!form.gateway.trim()) issues.push("Static guest gateway is required for Proxmox setup.");
+  if (!form.dns.trim()) issues.push("Static guest DNS is required for Proxmox setup.");
+  if (!requirements.memoryOk) issues.push(`Memory: ${requirements.memoryRequired}; ${requirements.memoryAvailable}.`);
+  if (!requirements.processorOk) issues.push(`CPU Cores: ${requirements.processorRequired}.`);
+  if (!requirements.diskOk) issues.push(`Disk: ${requirements.diskRequired}.`);
+  if (!form.playerIp.trim()) issues.push("Player-facing IP is required.");
+  if (parsePositiveInt(form.deepDesertWarmServers) > 0) {
+    issues.push("Warm Deep Desert Instances are not supported yet; set them to 0 for this build.");
+  }
+  if (deepDesertInstanceCount(form) > 1) {
+    issues.push("Only one Deep Desert instance is supported in this build.");
+  }
+  if (!hasServiceToken) issues.push("Self-Host Service Token is required.");
+  return issues;
+}
+
+function setupIssueSummary(
+  setupTarget: SetupTarget,
+  issues: string[],
+  proxmoxDetection: ProxmoxDetection | null,
+): string[] {
+  if (setupTarget !== "proxmox") return issues.slice(0, 6);
+  const summarized: string[] = [];
+  if (issues.some((issue) => issue.startsWith("Proxmox host URL") || issue.startsWith("Proxmox API token"))) {
+    summarized.push("Complete the Proxmox connection fields.");
+  }
+  if (issues.includes("Run Proxmox resource detection before setup.")) {
+    summarized.push("Run Proxmox resource detection before choosing VM resources.");
+  }
+  if (proxmoxDetection) {
+    summarized.push(
+      ...issues.filter(
+        (issue) =>
+          !issue.startsWith("Proxmox host URL") &&
+          !issue.startsWith("Proxmox API token") &&
+          issue !== "Run Proxmox resource detection before setup.",
+      ),
+    );
+  }
+  if (!proxmoxDetection) {
+    if (issues.includes("Self-Host Service Token is required.")) {
+      summarized.push("Self-Host Service Token is required.");
+    }
+    return summarized;
+  }
+  return summarized.slice(0, 6);
+}
+
 function calculateRequiredMemory(form: SetupForm): CalculatedMemory {
   const survivalInstances = Math.max(1, parsePositiveInt(form.survivalInstances));
   const deepDesertInstances =
@@ -3926,7 +4988,56 @@ function deepDesertInstanceCount(form: SetupForm): number {
 }
 
 function effectiveVmMemoryGb(form: SetupForm, calculatedMemory: CalculatedMemory): number {
-  return Math.max(calculatedMemory.gb, parsePositiveInt(form.vmMemoryGb));
+  return Math.max(minimumVmMemoryGb(form, calculatedMemory), parsePositiveInt(form.vmMemoryGb));
+}
+
+function effectiveProxmoxVmMemoryGb(
+  form: SetupForm,
+  calculatedMemory: CalculatedMemory,
+  detection: ProxmoxDetection | null,
+): number {
+  const requestedMemoryGb = effectiveVmMemoryGb(form, calculatedMemory);
+  const availableMemoryGb = proxmoxAvailableMemoryWholeGb(form, detection);
+  if (availableMemoryGb === null) return requestedMemoryGb;
+  return Math.min(requestedMemoryGb, availableMemoryGb);
+}
+
+function minimumVmMemoryGb(form: SetupForm, calculatedMemory: CalculatedMemory): number {
+  if (form.setupTarget !== "proxmox" || !form.enableSwap) {
+    return calculatedMemory.gb;
+  }
+  const survivalInstances = Math.max(1, parsePositiveInt(form.survivalInstances));
+  const deepDesertInstances = deepDesertInstanceCount(form);
+  const socialGb = form.includeSocial || deepDesertInstances > 0 ? 5 : 0;
+  const lowMemoryGb = survivalInstances * 15 + deepDesertInstances * 10 + socialGb;
+  return Math.min(calculatedMemory.gb, Math.max(1, lowMemoryGb));
+}
+
+function proxmoxAvailableMemoryWholeGb(form: SetupForm, detection: ProxmoxDetection | null): number | null {
+  const node = detection?.nodes.find((item) => item.node === form.proxmoxNode.trim()) ?? detection?.nodes[0] ?? null;
+  if (!node) return null;
+  const availableBytes = Math.max(0, node.maxmem - node.mem);
+  return Math.floor(availableBytes / 1024 / 1024 / 1024);
+}
+
+function proxmoxMemoryLimitText(
+  form: SetupForm,
+  calculatedMemory: CalculatedMemory,
+  detection: ProxmoxDetection | null,
+): string {
+  const minimumGb = minimumVmMemoryGb(form, calculatedMemory);
+  const requestedGb = effectiveVmMemoryGb(form, calculatedMemory);
+  if (form.setupTarget !== "proxmox") {
+    return `Minimum for this profile is ${minimumGb} GB. You can increase it, but not decrease below the selected profile.`;
+  }
+  const availableGb = proxmoxAvailableMemoryWholeGb(form, detection);
+  if (availableGb === null) {
+    return `Minimum for this profile is ${minimumGb} GB. Run Proxmox detection to cap this value to available node memory.`;
+  }
+  if (availableGb < requestedGb) {
+    return `Capped at ${availableGb} GB, the selected node's available whole-GB memory. Profile target is ${minimumGb} GB.`;
+  }
+  return `Minimum for this profile is ${minimumGb} GB. You can increase it up to ${availableGb} GB available on the selected node.`;
 }
 
 function effectiveProcessorCount(form: SetupForm): number {
@@ -4302,6 +5413,24 @@ function RemotePreflightSummary({ preflight }: { preflight: UbuntuSshPreflight }
   );
 }
 
+function ProxmoxDetectionSummary({ detection }: { detection: ProxmoxDetection }) {
+  const rows: Array<[string, string, "green" | "amber" | "red"]> = [
+    ["Version", detection.version.version || "Unknown", "green"],
+    ["Certificate", detection.certificateTrusted ? "Trusted fingerprint" : "Fingerprint captured", detection.certificateTrusted ? "green" : "amber"],
+    ["Nodes", detection.nodes.map((node) => `${node.node} (${node.status || "unknown"})`).join(", ") || "None", detection.nodes.length ? "green" : "red"],
+    ["Storage", detection.storages.map((storage) => `${storage.storage}: ${storage.content || "unknown"}`).join(", ") || "None", detection.storages.length ? "green" : "red"],
+    ["Bridges", detection.bridges.map((bridge) => bridge.cidr ? `${bridge.iface} ${bridge.cidr}` : bridge.iface).join(", ") || "None", detection.bridges.length ? "green" : "red"],
+    ["Next VMID", detection.nextVmid ? String(detection.nextVmid) : "Not detected", detection.nextVmid ? "green" : "amber"],
+  ];
+  return (
+    <Box className="info-card">
+      {rows.map(([label, value, tone]) => (
+        <InfoRow key={label} label={label} value={value} tone={tone} />
+      ))}
+    </Box>
+  );
+}
+
 function SetupWarningPills({ warnings }: { warnings: string[] }) {
   return (
     <Flex gap="2" wrap="wrap" className="setup-warning-pills">
@@ -4407,6 +5536,26 @@ function updateTone(status: UpdateStatus): "green" | "amber" | "red" {
   return "amber";
 }
 
+function serverPackageLabel(status: ServerPackageCheckStatus, packageStatus: ServerPackageStatus | null): string {
+  if (status === "checking") return "Package checking";
+  if (status === "updating") return "Package updating";
+  if (status === "failed") return "Package check failed";
+  if (status === "missing") return "Package missing";
+  if (status === "available") {
+    return packageStatus?.latestBuildId ? `Server ${packageStatus.latestBuildId} available` : "Server update available";
+  }
+  if (status === "current") {
+    return packageStatus?.installedBuildId ? `Server ${packageStatus.installedBuildId}` : "Server package current";
+  }
+  return "Server package";
+}
+
+function serverPackageTone(status: ServerPackageCheckStatus): "green" | "amber" | "red" {
+  if (status === "failed" || status === "missing") return "red";
+  if (status === "current") return "green";
+  return "amber";
+}
+
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (typeof err === "string") return err;
@@ -4446,6 +5595,12 @@ function networkStatusLabel(status: DetectionState): string {
 function formatGiB(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "unknown";
   return `${Math.round(bytes / 1024 / 1024 / 1024)} GB`;
+}
+
+function formatGiBFloor1(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "unknown";
+  const gib = bytes / 1024 / 1024 / 1024;
+  return `${(Math.floor(gib * 10) / 10).toFixed(1)} GB`;
 }
 
 function formatDuration(seconds: number): string {
@@ -4497,13 +5652,17 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function LogWindow({
   rows,
   level,
+  collapsed,
   onLevelChange,
   onClear,
+  onToggleCollapsed,
 }: {
   rows: LogRow[];
   level: LogLevelFilter;
+  collapsed: boolean;
   onLevelChange: (level: LogLevelFilter) => void;
   onClear: () => void;
+  onToggleCollapsed: () => void;
 }) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
@@ -4517,61 +5676,78 @@ function LogWindow({
   }, [rows]);
 
   return (
-    <Card size="3" variant="surface" className="pane">
+    <Card size="3" variant="surface" className={`pane log-pane${collapsed ? " is-collapsed" : ""}`}>
       <Flex direction="column" height="100%" minHeight="0">
-        <Flex align="center" justify="between" gap="3" mb="3">
-          <Text size="2" color="gray">
-            Showing {rows.length} entries
-          </Text>
+        <Flex align="center" justify="between" gap="3" mb={collapsed ? "0" : "3"}>
+          <Box minWidth="0">
+            <Text as="div" size="2" weight="medium">
+              Logs
+            </Text>
+            <Text as="div" size="1" color="gray">
+              {rows.length} entries
+            </Text>
+          </Box>
           <Flex align="center" gap="2">
-            <Select.Root value={level} onValueChange={(value) => onLevelChange(value as LogLevelFilter)}>
-              <Select.Trigger aria-label="Minimum log level" />
-              <Select.Content>
-                <Select.Item value="debug">Debug</Select.Item>
-                <Select.Item value="info">Info</Select.Item>
-                <Select.Item value="warn">Warn</Select.Item>
-                <Select.Item value="error">Error</Select.Item>
-              </Select.Content>
-            </Select.Root>
-            <Button type="button" size="1" variant="surface" disabled={rows.length === 0} onClick={onClear}>
-              Clear
+            {collapsed ? null : (
+              <>
+                <Select.Root value={level} onValueChange={(value) => onLevelChange(value as LogLevelFilter)}>
+                  <Select.Trigger aria-label="Minimum log level" />
+                  <Select.Content>
+                    <Select.Item value="debug">Debug</Select.Item>
+                    <Select.Item value="info">Info</Select.Item>
+                    <Select.Item value="warn">Warn</Select.Item>
+                    <Select.Item value="error">Error</Select.Item>
+                  </Select.Content>
+                </Select.Root>
+                <Button type="button" size="1" variant="surface" disabled={rows.length === 0} onClick={onClear}>
+                  Clear
+                </Button>
+              </>
+            )}
+            <Button
+              type="button"
+              size="1"
+              variant="surface"
+              aria-label={collapsed ? "Expand logs" : "Collapse logs"}
+              onClick={onToggleCollapsed}
+            >
+              {collapsed ? <ChevronUpIcon /> : <ChevronDownIcon />}
             </Button>
           </Flex>
         </Flex>
-        <Box
-          className="log-body"
-          ref={bodyRef}
-          onScroll={(event) => {
-            const body = event.currentTarget;
-            const distanceFromBottom = body.scrollHeight - body.scrollTop - body.clientHeight;
-            stickToBottomRef.current = distanceFromBottom < 80;
-          }}
-        >
-          <Flex direction="column" gap="0">
-            {rows.map((row) => (
-              <Grid
-                key={row.id}
-                columns="96px 58px 62px 1fr"
-                gap="3"
-                align="center"
-                className={`log-line log-${row.level}`}
-              >
-                <Text size="2" color="gray" className="mono log-meta">
-                  {row.timestamp}
-                </Text>
-                <Text size="2" className="mono log-meta log-level">
-                  {row.level}
-                </Text>
-                <Text size="2" color="gray" className="mono log-meta">
-                  {row.scope}
-                </Text>
-                <Text size="2" className="mono">
-                  {row.message}
-                </Text>
-              </Grid>
-            ))}
-          </Flex>
-        </Box>
+        {collapsed ? null : (
+          <Box
+            className="log-body"
+            ref={bodyRef}
+            onScroll={(event) => {
+              const body = event.currentTarget;
+              const distanceFromBottom = body.scrollHeight - body.scrollTop - body.clientHeight;
+              stickToBottomRef.current = distanceFromBottom < 80;
+            }}
+          >
+            <Flex direction="column" gap="0">
+              {rows.map((row) => (
+                <Grid
+                  key={row.id}
+                  columns="96px 44px 1fr"
+                  gap="2"
+                  align="center"
+                  className={`log-line log-${row.level}`}
+                >
+                  <Text color="gray" className="mono log-meta log-text">
+                    {row.timestamp}
+                  </Text>
+                  <Text className="mono log-meta log-level log-text">
+                    {row.level}
+                  </Text>
+                  <Text className="mono log-text">
+                    {row.message}
+                  </Text>
+                </Grid>
+              ))}
+            </Flex>
+          </Box>
+        )}
       </Flex>
     </Card>
   );
@@ -4606,6 +5782,51 @@ function RollbackDialog({
           <AlertDialog.Action disabled={rollbackRunning}>
             <Button color="red" disabled={rollbackRunning} onClick={onRollback}>
               {rollbackRunning ? "Rolling back..." : "Rollback"}
+            </Button>
+          </AlertDialog.Action>
+        </Flex>
+      </AlertDialog.Content>
+    </AlertDialog.Root>
+  );
+}
+
+function ServerUpdateConfirmDialog({
+  pending,
+  onOpenChange,
+  onConfirm,
+}: {
+  pending: PendingServerUpdate | null;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}) {
+  const serverName =
+    pending?.type === "remote"
+      ? pending.server.name
+      : pending?.type === "local"
+        ? pending.server.vm.name
+        : "";
+  return (
+    <AlertDialog.Root open={!!pending} onOpenChange={onOpenChange}>
+      <AlertDialog.Content maxWidth="520px">
+        <AlertDialog.Title>Update server?</AlertDialog.Title>
+        <AlertDialog.Description size="2" color="gray">
+          This operation will stop the BattleGroup, verify it is fully stopped, update the server,
+          and start the BattleGroup again. Are you sure?
+        </AlertDialog.Description>
+        {serverName ? (
+          <Text as="p" size="2" color="gray" mt="3">
+            Target: <Text weight="medium">{serverName}</Text>
+          </Text>
+        ) : null}
+        <Flex gap="3" justify="end" mt="5">
+          <AlertDialog.Cancel>
+            <Button variant="soft" color="gray">
+              Cancel
+            </Button>
+          </AlertDialog.Cancel>
+          <AlertDialog.Action>
+            <Button color="amber" onClick={onConfirm}>
+              Update Server
             </Button>
           </AlertDialog.Action>
         </Flex>
@@ -4742,7 +5963,7 @@ function LocalHyperVAttachDialog({
               value={form.vmName}
               disabled={running}
               onChange={(event) => update("vmName", event.target.value)}
-              placeholder="dune-awakening"
+              placeholder="dune-server"
             />
           </label>
           <label>

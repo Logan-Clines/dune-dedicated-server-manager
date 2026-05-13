@@ -1,7 +1,7 @@
 //! App-owned external tool installation and discovery.
 
 use std::{
-    env,
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
@@ -18,7 +18,11 @@ use crate::{
 const STEAMCMD_URL: &str = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip";
 const OPENSSH_URL: &str =
     "https://github.com/PowerShell/Win32-OpenSSH/releases/latest/download/OpenSSH-Win64.zip";
-const SERVER_APP_ID: &str = "3104830";
+const QEMU_IMG_URL: &str = "https://cloudbase.it/downloads/qemu-img-win-x64-2_3_0.zip";
+/// Steam app id for the Dune Awakening dedicated server package.
+pub const SERVER_APP_ID: &str = "3104830";
+
+const SERVER_MANIFEST_PATH: &str = "steamapps/appmanifest_3104830.acf";
 
 /// External command-line tool managed under the app-owned tools directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +33,9 @@ pub enum ManagedTool {
     /// Windows OpenSSH client distribution.
     #[serde(rename = "openssh")]
     OpenSsh,
+    /// QEMU disk image conversion tool.
+    #[serde(rename = "qemu-img")]
+    QemuImg,
 }
 
 impl ManagedTool {
@@ -37,8 +44,9 @@ impl ManagedTool {
         match value.to_ascii_lowercase().as_str() {
             "steamcmd" | "steam-cmd" => Ok(Self::SteamCmd),
             "openssh" | "open-ssh" | "ssh" => Ok(Self::OpenSsh),
+            "qemu-img" | "qemuimg" | "qemu" => Ok(Self::QemuImg),
             _ => Err(failure(format!(
-                "Unknown managed tool {value}; expected steamcmd or openssh"
+                "Unknown managed tool {value}; expected steamcmd, openssh, or qemu-img"
             ))),
         }
     }
@@ -48,6 +56,7 @@ impl ManagedTool {
         match self {
             Self::SteamCmd => "steamcmd",
             Self::OpenSsh => "openssh",
+            Self::QemuImg => "qemu-img",
         }
     }
 
@@ -56,6 +65,7 @@ impl ManagedTool {
         match self {
             Self::SteamCmd => "steamcmd.exe",
             Self::OpenSsh => "ssh.exe",
+            Self::QemuImg => "qemu-img.exe",
         }
     }
 
@@ -64,6 +74,7 @@ impl ManagedTool {
         match self {
             Self::SteamCmd => STEAMCMD_URL,
             Self::OpenSsh => OPENSSH_URL,
+            Self::QemuImg => QEMU_IMG_URL,
         }
     }
 }
@@ -108,6 +119,56 @@ pub struct ServerPackageInstallResult {
     pub installed: bool,
 }
 
+/// Vendor package layout detected on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ServerPackageLayout {
+    /// Original package layout using `internal-scripts`.
+    LegacyInternalScripts,
+    /// Current package layout using `battlegroup-management`.
+    BattlegroupManagement,
+}
+
+/// Required paths discovered for a host-side Dune server package.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerPackageLayoutInfo {
+    /// Package root directory.
+    pub package_dir: PathBuf,
+    /// Detected vendor layout.
+    pub layout: ServerPackageLayout,
+    /// Host-side batch entrypoint.
+    pub battlegroup_bat: PathBuf,
+    /// Vendor SSH private key used for first guest contact.
+    pub ssh_key: PathBuf,
+    /// Host-side bootstrap helper uploaded into the guest.
+    pub bootstrap_setup: PathBuf,
+    /// Packaged Hyper-V VM configuration.
+    pub vmcx_path: PathBuf,
+}
+
+/// Version and completeness status for the host-side Dune server package.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerPackageStatus {
+    /// Package root directory.
+    pub package_dir: PathBuf,
+    /// Steam app id used for the package.
+    pub app_id: String,
+    /// Installed Steam build id from the local manifest.
+    pub installed_build_id: Option<String>,
+    /// Latest Steam public branch build id when SteamCMD could report it.
+    pub latest_build_id: Option<String>,
+    /// Whether the local build is older than the latest known build.
+    pub update_available: bool,
+    /// Whether the app recognized all required package assets.
+    pub complete: bool,
+    /// Detected vendor layout, when complete enough to identify.
+    pub layout: Option<ServerPackageLayout>,
+    /// Human-readable status details or recovery hint.
+    pub message: String,
+}
+
 /// Manager for app-owned external command-line tools.
 #[derive(Debug, Clone)]
 pub struct Toolchain {
@@ -145,10 +206,14 @@ impl Toolchain {
 
     /// Returns status for all supported tools.
     pub fn status_all(&self) -> Vec<ToolStatus> {
-        [ManagedTool::SteamCmd, ManagedTool::OpenSsh]
-            .into_iter()
-            .map(|tool| self.status(tool))
-            .collect()
+        [
+            ManagedTool::SteamCmd,
+            ManagedTool::OpenSsh,
+            ManagedTool::QemuImg,
+        ]
+        .into_iter()
+        .map(|tool| self.status(tool))
+        .collect()
     }
 
     /// Installs one tool from its default URL or a caller-provided archive URL.
@@ -240,24 +305,217 @@ impl Toolchain {
             installed,
         })
     }
+
+    /// Reads host-side server package status and optionally the latest Steam build id.
+    pub fn server_package_status(
+        &self,
+        install_dir: impl AsRef<Path>,
+    ) -> CommandResult<ServerPackageStatus> {
+        let install_dir = install_dir.as_ref();
+        let layout = detect_server_package_layout(install_dir).ok();
+        let installed_build_id = read_installed_server_build_id(install_dir);
+        let latest_build_id = if self.status(ManagedTool::SteamCmd).installed {
+            query_latest_server_build_id(&self.status(ManagedTool::SteamCmd).executable).ok()
+        } else {
+            None
+        };
+        let update_available = installed_build_id
+            .as_deref()
+            .zip(latest_build_id.as_deref())
+            .is_some_and(|(installed, latest)| installed != latest);
+        let complete = layout.is_some();
+        let message = match (&layout, &installed_build_id, &latest_build_id) {
+            (Some(info), Some(installed), Some(latest)) if installed == latest => {
+                format!("{:?} package is current at build {installed}.", info.layout)
+            }
+            (Some(info), Some(installed), Some(latest)) => {
+                format!(
+                    "{:?} package build {installed} is older than latest build {latest}.",
+                    info.layout
+                )
+            }
+            (Some(info), Some(installed), None) => {
+                format!(
+                    "{:?} package build {installed} is installed; latest build is unknown.",
+                    info.layout
+                )
+            }
+            (Some(info), None, _) => format!(
+                "{:?} package assets are present but the Steam manifest build id was not found.",
+                info.layout
+            ),
+            (None, _, _) => {
+                "Server package is missing required VM, SSH key, or bootstrap assets.".to_string()
+            }
+        };
+        Ok(ServerPackageStatus {
+            package_dir: install_dir.to_path_buf(),
+            app_id: SERVER_APP_ID.to_string(),
+            installed_build_id,
+            latest_build_id,
+            update_available,
+            complete,
+            layout: layout.map(|info| info.layout),
+            message,
+        })
+    }
 }
 
 fn server_package_exists(install_dir: &Path) -> bool {
-    let vm_dir = install_dir.join("Virtual Machines");
-    install_dir.join("initial-setup.bat").is_file()
-        && install_dir.join("battlegroup.bat").is_file()
-        && vm_dir
-            .read_dir()
-            .ok()
-            .into_iter()
-            .flatten()
-            .filter_map(Result::ok)
-            .any(|entry| {
-                entry
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("vmcx"))
-            })
+    detect_server_package_layout(install_dir).is_ok()
+}
+
+/// Detects a complete server package layout and returns its required paths.
+pub fn detect_server_package_layout(
+    install_dir: impl AsRef<Path>,
+) -> CommandResult<ServerPackageLayoutInfo> {
+    let install_dir = install_dir.as_ref();
+    let battlegroup_bat = install_dir.join("battlegroup.bat");
+    if !battlegroup_bat.is_file() {
+        return Err(failure(format!(
+            "Vendor battlegroup entrypoint was not found: {}",
+            battlegroup_bat.display()
+        )));
+    }
+    let vmcx_path = find_packaged_vmcx(install_dir).ok_or_else(|| {
+        failure(format!(
+            "Packaged VM configuration was not found under {}",
+            install_dir.join("Virtual Machines").display()
+        ))
+    })?;
+    let candidates = [
+        (
+            ServerPackageLayout::BattlegroupManagement,
+            install_dir
+                .join("battlegroup-management")
+                .join("ssh")
+                .join("bundledSshKey"),
+            install_dir
+                .join("battlegroup-management")
+                .join("bootstrap")
+                .join("setup"),
+        ),
+        (
+            ServerPackageLayout::LegacyInternalScripts,
+            install_dir
+                .join("internal-scripts")
+                .join("ssh")
+                .join("sshKey"),
+            install_dir
+                .join("internal-scripts")
+                .join("bootstrap")
+                .join("setup"),
+        ),
+    ];
+    for (layout, ssh_key, bootstrap_setup) in candidates {
+        if ssh_key.is_file() && bootstrap_setup.is_file() {
+            return Ok(ServerPackageLayoutInfo {
+                package_dir: install_dir.to_path_buf(),
+                layout,
+                battlegroup_bat,
+                ssh_key,
+                bootstrap_setup,
+                vmcx_path,
+            });
+        }
+    }
+    Err(failure(format!(
+        "Vendor SSH key/bootstrap files were not found in supported layouts under {}",
+        install_dir.display()
+    )))
+}
+
+fn find_packaged_vmcx(install_dir: &Path) -> Option<PathBuf> {
+    install_dir
+        .join("Virtual Machines")
+        .read_dir()
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("vmcx"))
+        })
+}
+
+/// Reads the installed Steam build id from the package manifest.
+pub fn read_installed_server_build_id(install_dir: impl AsRef<Path>) -> Option<String> {
+    let manifest = fs::read_to_string(install_dir.as_ref().join(SERVER_MANIFEST_PATH)).ok()?;
+    parse_vdf_value(&manifest, "buildid")
+}
+
+fn query_latest_server_build_id(steamcmd: &Path) -> CommandResult<String> {
+    let mut command = Command::new(steamcmd);
+    suppress_console_window(&mut command);
+    let output = command
+        .args([
+            "+login",
+            "anonymous",
+            "+app_info_update",
+            "1",
+            "+app_info_print",
+            SERVER_APP_ID,
+            "+quit",
+        ])
+        .output()
+        .map_err(|err| failure(format!("Failed to run SteamCMD app info query: {err}")))?;
+    if !output.status.success() {
+        return Err(command_failure("SteamCMD app info query failed", output));
+    }
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    parse_public_branch_build_id(&text)
+        .or_else(|| parse_vdf_value(&text, "buildid"))
+        .ok_or_else(|| failure("SteamCMD app info did not contain a public build id"))
+}
+
+fn parse_public_branch_build_id(text: &str) -> Option<String> {
+    let mut in_branches = false;
+    let mut in_public = false;
+    let mut depth = 0i32;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('"') && trimmed.contains("\"branches\"") {
+            in_branches = true;
+            depth = 0;
+            continue;
+        }
+        if in_branches && trimmed.starts_with('"') && trimmed.contains("\"public\"") {
+            in_public = true;
+            depth = 0;
+            continue;
+        }
+        if in_public {
+            if let Some(value) = parse_vdf_line_value(trimmed, "buildid") {
+                return Some(value);
+            }
+            depth += trimmed.matches('{').count() as i32;
+            depth -= trimmed.matches('}').count() as i32;
+            if depth < 0 || trimmed == "}" {
+                in_public = false;
+            }
+        } else if in_branches && trimmed == "}" {
+            in_branches = false;
+        }
+    }
+    None
+}
+
+fn parse_vdf_value(text: &str, key: &str) -> Option<String> {
+    text.lines()
+        .find_map(|line| parse_vdf_line_value(line.trim(), key))
+}
+
+fn parse_vdf_line_value(line: &str, key: &str) -> Option<String> {
+    let mut parts = line.split('"').filter(|part| !part.trim().is_empty());
+    let found_key = parts.next()?.trim();
+    if found_key != key {
+        return None;
+    }
+    Some(parts.next()?.trim().to_string())
 }
 
 /// Resolves the default manager data root for owned tools and downloads.
@@ -306,11 +564,8 @@ fn default_runtime_root() -> CommandResult<PathBuf> {
 
 /// Copies the vendor SSH key to a temporary path and restricts its ACL for OpenSSH.
 pub fn prepare_vendor_ssh_key(server_package_dir: impl AsRef<Path>) -> CommandResult<PathBuf> {
-    let source = server_package_dir
-        .as_ref()
-        .join("internal-scripts")
-        .join("ssh")
-        .join("sshKey");
+    let layout = detect_server_package_layout(server_package_dir)?;
+    let source = layout.ssh_key;
     if !source.is_file() {
         return Err(failure(format!(
             "Vendor SSH key was not found: {}",
@@ -427,5 +682,84 @@ mod tests {
         assert!(script.contains("OpenSSH-Win64.zip"));
         assert!(!script.contains("setx"));
         assert!(!script.contains("$env:Path"));
+    }
+
+    #[test]
+    fn detects_new_battlegroup_management_layout() {
+        let root = temp_package_root("new-layout");
+        fs::create_dir_all(root.join("Virtual Machines")).unwrap();
+        fs::create_dir_all(root.join("battlegroup-management/ssh")).unwrap();
+        fs::create_dir_all(root.join("battlegroup-management/bootstrap")).unwrap();
+        fs::write(root.join("battlegroup.bat"), "").unwrap();
+        fs::write(root.join("Virtual Machines/test.vmcx"), "").unwrap();
+        fs::write(root.join("battlegroup-management/ssh/bundledSshKey"), "key").unwrap();
+        fs::write(root.join("battlegroup-management/bootstrap/setup"), "setup").unwrap();
+
+        let layout = detect_server_package_layout(&root).unwrap();
+
+        assert_eq!(layout.layout, ServerPackageLayout::BattlegroupManagement);
+        assert!(layout.ssh_key.ends_with("bundledSshKey"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn detects_legacy_internal_scripts_layout() {
+        let root = temp_package_root("old-layout");
+        fs::create_dir_all(root.join("Virtual Machines")).unwrap();
+        fs::create_dir_all(root.join("internal-scripts/ssh")).unwrap();
+        fs::create_dir_all(root.join("internal-scripts/bootstrap")).unwrap();
+        fs::write(root.join("battlegroup.bat"), "").unwrap();
+        fs::write(root.join("Virtual Machines/test.vmcx"), "").unwrap();
+        fs::write(root.join("internal-scripts/ssh/sshKey"), "key").unwrap();
+        fs::write(root.join("internal-scripts/bootstrap/setup"), "setup").unwrap();
+
+        let layout = detect_server_package_layout(&root).unwrap();
+
+        assert_eq!(layout.layout, ServerPackageLayout::LegacyInternalScripts);
+        assert!(layout.ssh_key.ends_with("sshKey"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parses_manifest_and_public_branch_build_ids() {
+        let manifest = r#"
+"AppState"
+{
+  "appid" "3104830"
+  "buildid" "23216207"
+}
+"#;
+        assert_eq!(
+            parse_vdf_value(manifest, "buildid").as_deref(),
+            Some("23216207")
+        );
+
+        let app_info = r#"
+"depots"
+{
+  "branches"
+  {
+    "beta" { "buildid" "1" }
+    "public"
+    {
+      "buildid" "23299999"
+    }
+  }
+}
+"#;
+        assert_eq!(
+            parse_public_branch_build_id(app_info).as_deref(),
+            Some("23299999")
+        );
+    }
+
+    fn temp_package_root(name: &str) -> PathBuf {
+        env::temp_dir().join(format!(
+            "dune-manager-toolchain-test-{name}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
     }
 }

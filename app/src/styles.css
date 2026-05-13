@@ -141,7 +141,11 @@ button:disabled,
 }
 
 .app-main.has-log {
-  grid-template-columns: minmax(520px, 620px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 3fr) minmax(380px, 2fr);
+}
+
+.app-main.log-collapsed {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
 }
 
 .pane {
@@ -169,6 +173,13 @@ button:disabled,
 
 .setup-controls.is-disabled .setup-section {
   pointer-events: none;
+}
+
+.setup-package-gate {
+  padding: var(--space-4);
+  border: 1px solid var(--amber-a7);
+  border-radius: var(--radius-4);
+  background: var(--amber-a2);
 }
 
 .is-flow-disabled {
@@ -488,6 +499,14 @@ button:disabled,
   white-space: nowrap;
 }
 
+.log-pane {
+  overflow: hidden;
+}
+
+.log-pane.is-collapsed {
+  align-self: start;
+}
+
 .log-body {
   min-height: 0;
   flex: 1;
@@ -495,10 +514,15 @@ button:disabled,
 }
 
 .log-line {
-  min-height: 24px;
+  min-height: 22px;
   align-items: baseline;
   padding: 0 var(--space-1);
   border-radius: var(--radius-2);
+}
+
+.log-text {
+  font-size: 13px;
+  line-height: 1.35;
 }
 
 .log-meta {

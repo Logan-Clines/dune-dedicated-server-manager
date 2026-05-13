@@ -61,3 +61,4 @@ codex_vm_ed25519_dropbear.pub
 snapshots/
 keys/
 initial-setup-log.txt
+secrets/

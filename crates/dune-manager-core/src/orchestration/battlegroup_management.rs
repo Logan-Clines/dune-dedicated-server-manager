@@ -250,7 +250,7 @@ fn is_director_ready_phase(phase: &str) -> bool {
         )
 }
 
-/// Updates a BattleGroup from already-downloaded guest payload files.
+/// Updates a BattleGroup from downloaded guest payload files.
 pub struct BattlegroupUpdateOrchestrator<B> {
     bootstrap: B,
 }
@@ -286,6 +286,23 @@ where
         );
         self.bootstrap
             .patch_battlegroup_images(&battlegroup.namespace, &battlegroup.name)
+    }
+
+    /// Downloads the latest guest payload, imports images, and patches the BattleGroup.
+    pub fn update_from_steam(
+        &self,
+        battlegroup: &BattlegroupRef,
+        sink: &mut impl OperationSink,
+    ) -> CommandResult<()> {
+        battlegroup.validate()?;
+        emit(
+            sink,
+            "bg.update.download-payload",
+            "Checking and downloading guest server payload.",
+            StepAction::Download,
+        );
+        self.bootstrap.ensure_server_payload()?;
+        self.update_from_downloads(battlegroup, sink)
     }
 }
 
@@ -383,6 +400,7 @@ mod tests {
         }
 
         fn ensure_server_payload(&self) -> CommandResult<()> {
+            self.calls.borrow_mut().push("ensure_server_payload");
             Ok(())
         }
 
@@ -585,5 +603,36 @@ mod tests {
             .events
             .iter()
             .any(|event| event.step_id == "bg.update.patch-images"));
+    }
+
+    #[test]
+    fn full_update_downloads_before_importing_and_patching() {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let updater = BattlegroupUpdateOrchestrator::new(MockBootstrap {
+            calls: calls.clone(),
+        });
+        let mut sink = VecOperationSink::default();
+        updater
+            .update_from_steam(
+                &BattlegroupRef {
+                    namespace: "funcom-seabass-sh-host-abcdef".to_string(),
+                    name: "sh-host-abcdef".to_string(),
+                },
+                &mut sink,
+            )
+            .unwrap();
+
+        assert_eq!(
+            calls.borrow().as_slice(),
+            &[
+                "ensure_server_payload",
+                "import_battlegroup_images",
+                "patch_battlegroup_images"
+            ]
+        );
+        assert!(sink
+            .events
+            .iter()
+            .any(|event| event.step_id == "bg.update.download-payload"));
     }
 }

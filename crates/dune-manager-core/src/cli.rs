@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -8,19 +10,21 @@ use crate::{
     errors::failure,
     models::{CommandFailure, CommandResult},
     orchestration::{
-        battlegroup_command_catalog, detect_player_address_candidates, hyperv_initial_setup_flow,
+        battlegroup_command_catalog, convert_vhdx_to_cached_qcow2,
+        detect_player_address_candidates, find_vendor_vhdx, hyperv_initial_setup_flow,
         BattlegroupManagementOrchestrator, BattlegroupRef, BattlegroupUpdateOrchestrator,
         DuneVmDetector, ExperimentalSwapOrchestrator, ExperimentalSwapRequest,
         GuestBootstrapOrchestrator, GuestBootstrapPlan, GuestNetworkConfig,
         HyperVVmLifecycleOrchestrator, HyperVVmSetupOrchestrator, HyperVVmSetupRequest,
         InstanceMap, MapInstanceOrchestrator, MemoryProfile, OpenSshGuestProvider, OpenSshRunner,
-        OpenSshTarget, OrchestrationEvent, SetMapInstancesRequest, SshGuestBootstrapProvider,
-        StepAction, StepDomain, StrictPowerShellHyperV, StructuredBattlegroupOps,
-        StructuredKubectl, UbuntuSshPrepareRequest, UbuntuSshSetup, VecOperationSink, VmProvider,
+        OpenSshTarget, OrchestrationEvent, ProxmoxClient, ProxmoxClientConfig,
+        ProxmoxCreateVmRequest, SetMapInstancesRequest, SshGuestBootstrapProvider, StepAction,
+        StepDomain, StrictPowerShellHyperV, StructuredBattlegroupOps, StructuredKubectl,
+        UbuntuSshPrepareRequest, UbuntuSshSetup, VecOperationSink, VmProvider,
         WorldManifestRequest, DEFAULT_VM_DISK_BYTES,
     },
     security::redact_json,
-    toolchain::{ManagedTool, Toolchain},
+    toolchain::{default_server_package_dir, ManagedTool, Toolchain},
 };
 
 /// Runs the CLI using process arguments and returns a process exit code.
@@ -114,13 +118,34 @@ fn run_cli(args: Vec<String>) -> CommandResult<Value> {
                     ));
                 }
                 let mut results = Vec::new();
-                for tool in [ManagedTool::SteamCmd, ManagedTool::OpenSsh] {
+                for tool in [
+                    ManagedTool::SteamCmd,
+                    ManagedTool::OpenSsh,
+                    ManagedTool::QemuImg,
+                ] {
                     results.push(toolchain.install(tool, force, None)?);
                 }
                 to_json(results)
             } else {
                 to_json(toolchain.install(ManagedTool::parse(&tool_name)?, force, source_url)?)
             }
+        }
+        ["server-package", "status"] => {
+            let package_dir = args
+                .optional("--server-package")
+                .map(PathBuf::from)
+                .unwrap_or(default_server_package_dir()?);
+            to_json(toolchain(&args)?.server_package_status(package_dir)?)
+        }
+        ["server-package", "update"] => {
+            let package_dir = args
+                .optional("--server-package")
+                .map(PathBuf::from)
+                .unwrap_or(default_server_package_dir()?);
+            let toolchain = toolchain(&args)?;
+            toolchain.install(ManagedTool::SteamCmd, false, None)?;
+            toolchain.install_server_package(&package_dir)?;
+            to_json(toolchain.server_package_status(package_dir)?)
         }
         ["vm", "get"] => {
             let name = args.required("--name")?;
@@ -178,6 +203,56 @@ fn run_cli(args: Vec<String>) -> CommandResult<Value> {
                 result,
                 events: sink.events,
             })
+        }
+        ["proxmox", "detect"] => {
+            let client = proxmox_client(&args)?;
+            to_json(client.detect()?)
+        }
+        ["proxmox", "convert-image"] => {
+            let toolchain = toolchain(&args)?;
+            let server_package = args
+                .optional("--server-package")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("dune-server"));
+            let source = args
+                .optional("--source-vhdx")
+                .map(PathBuf::from)
+                .map(Ok)
+                .unwrap_or_else(|| find_vendor_vhdx(&server_package))?;
+            let cache_dir = args
+                .optional("--cache-dir")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| toolchain.root().join("images").join("proxmox"));
+            let qemu = if let Some(path) = args.optional("--qemu-img") {
+                PathBuf::from(path)
+            } else {
+                toolchain.status(ManagedTool::QemuImg).executable
+            };
+            to_json(convert_vhdx_to_cached_qcow2(qemu, source, cache_dir)?)
+        }
+        ["proxmox", "create-alpine-vm"] => {
+            let client = proxmox_client(&args)?;
+            let request = proxmox_create_request(&args)?;
+            let qcow2 = args.required("--qcow2")?;
+            let mut sink = VecOperationSink::default();
+            let result = client.create_alpine_vm(&request, Path::new(&qcow2), &mut sink)?;
+            to_json(OperationOutput {
+                ok: true,
+                result,
+                events: sink.events,
+            })
+        }
+        ["proxmox", "vm", "status"] => {
+            let client = proxmox_client(&args)?;
+            to_json(client.vm_status(&args.required("--node")?, args.required_u64("--vmid")?)?)
+        }
+        ["proxmox", "vm", "start"] => {
+            let client = proxmox_client(&args)?;
+            to_json(client.start_vm(&args.required("--node")?, args.required_u64("--vmid")?)?)
+        }
+        ["proxmox", "vm", "stop"] => {
+            let client = proxmox_client(&args)?;
+            to_json(client.stop_vm(&args.required("--node")?, args.required_u64("--vmid")?)?)
         }
         ["guest", "player-candidates"] => {
             let host = args.required("--host")?;
@@ -491,6 +566,13 @@ fn run_cli(args: Vec<String>) -> CommandResult<Value> {
             let bg = battlegroup_ref(&args)?;
             let provider = SshGuestBootstrapProvider::new(ssh_runner(&args)?);
             let mut sink = VecOperationSink::default();
+            BattlegroupUpdateOrchestrator::new(provider).update_from_steam(&bg, &mut sink)?;
+            operation_ok(sink)
+        }
+        ["bg", "apply-downloaded-update"] => {
+            let bg = battlegroup_ref(&args)?;
+            let provider = SshGuestBootstrapProvider::new(ssh_runner(&args)?);
+            let mut sink = VecOperationSink::default();
             BattlegroupUpdateOrchestrator::new(provider).update_from_downloads(&bg, &mut sink)?;
             operation_ok(sink)
         }
@@ -537,6 +619,61 @@ fn toolchain(args: &CliArgs) -> CommandResult<Toolchain> {
     } else {
         Toolchain::from_default_root()
     }
+}
+
+fn proxmox_client(args: &CliArgs) -> CommandResult<ProxmoxClient> {
+    ProxmoxClient::new(ProxmoxClientConfig {
+        base_url: args.required("--url")?,
+        token_id: args.required("--token-id")?,
+        token_secret: proxmox_token_secret(args)?,
+        accepted_certificate_sha256: args.optional("--cert-sha256"),
+    })
+}
+
+fn proxmox_token_secret(args: &CliArgs) -> CommandResult<String> {
+    if let Some(value) = args.optional("--token-secret") {
+        return Ok(value);
+    }
+    if let Some(path) = args.optional("--token-secret-file") {
+        let text = std::fs::read_to_string(&path).map_err(|err| {
+            failure(format!(
+                "Failed to read Proxmox token secret file {path}: {err}"
+            ))
+        })?;
+        let secret = text.trim_end_matches(['\r', '\n']).to_string();
+        if secret.is_empty() {
+            return Err(failure("Proxmox token secret file is empty"));
+        }
+        return Ok(secret);
+    }
+    if let Some(name) = args.optional("--token-secret-env") {
+        let secret = std::env::var(&name)
+            .map_err(|_| failure(format!("Environment variable {name} is not set")))?;
+        if secret.trim().is_empty() {
+            return Err(failure(format!("Environment variable {name} is empty")));
+        }
+        return Ok(secret);
+    }
+    Err(failure(
+        "Missing Proxmox token secret; use --token-secret, --token-secret-file, or --token-secret-env",
+    ))
+}
+
+fn proxmox_create_request(args: &CliArgs) -> CommandResult<ProxmoxCreateVmRequest> {
+    Ok(ProxmoxCreateVmRequest {
+        node: args.required("--node")?,
+        vmid: args.required_u64("--vmid")?,
+        vm_name: args.required("--vm-name")?,
+        vm_storage: args.required("--vm-storage")?,
+        import_storage: args.required("--import-storage")?,
+        bridge: args.required("--bridge")?,
+        mac_address: args.optional("--mac-address"),
+        memory_gb: args.required_u64("--memory-gb")?,
+        cores: u32::try_from(args.required_u64("--cores")?)
+            .map_err(|_| failure("--cores must fit in a 32-bit value"))?,
+        disk_gb: args.required_u64("--disk-gb")?,
+        qemu_guest_agent: !args.has_flag("--no-qemu-guest-agent"),
+    })
 }
 
 fn optional_port(args: &CliArgs, name: &str) -> CommandResult<Option<u16>> {

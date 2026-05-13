@@ -35,6 +35,8 @@ pub mod kubernetes_ssh;
 pub mod openssh_runner;
 /// Provider traits and shared provider data models.
 pub mod providers;
+/// Proxmox VE API provisioning support.
+pub mod proxmox;
 /// Strict command execution and strict JSON parsing.
 pub mod strict_command;
 /// Ubuntu-over-SSH remote setup phases.
@@ -57,6 +59,7 @@ pub use instance_management::*;
 pub use kubernetes_ssh::*;
 pub use openssh_runner::*;
 pub use providers::*;
+pub use proxmox::*;
 pub use strict_command::*;
 pub use ubuntu_ssh_setup::*;
 pub use vendor_flows::*;

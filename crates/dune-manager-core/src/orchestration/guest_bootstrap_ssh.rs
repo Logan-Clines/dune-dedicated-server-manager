@@ -209,9 +209,6 @@ set -eu
 DUNE_USER_PATH={dune_home}
 DOWNLOAD_PATH="$DUNE_USER_PATH/download"
 mkdir -p "$DOWNLOAD_PATH"
-if [ -f "$DOWNLOAD_PATH/scripts/battlegroup.sh" ] && [ -f "$DOWNLOAD_PATH/scripts/setup.sh" ]; then
-  exit 0
-fi
 steamcmd_update_once() {{
   if command -v timeout >/dev/null 2>&1; then
     timeout 45m steamcmd +@ShutdownOnFailedCommand 1 +@NoPromptForPassword 1 +set_spew_level 1 1 +force_install_dir "$DOWNLOAD_PATH" +login anonymous +app_update {app_id} validate +logoff +quit < /dev/null >&2

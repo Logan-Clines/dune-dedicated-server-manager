@@ -6,6 +6,8 @@ use serde::Serialize;
 pub enum ProviderKind {
     /// Windows Hyper-V host provider.
     HyperV,
+    /// Proxmox VE API provider.
+    Proxmox,
     /// OpenSSH guest provider.
     Ssh,
     /// Container runtime provider.
@@ -22,6 +24,8 @@ pub enum StepDomain {
     Host,
     /// Hyper-V VM and switch operations.
     HyperV,
+    /// Proxmox VM, storage, and network operations.
+    Proxmox,
     /// SteamCMD package installation or update.
     Steam,
     /// SSH connectivity and transfer work.
@@ -136,6 +140,14 @@ pub enum BattlegroupCommand {
     Update,
     /// Edit battlegroup settings.
     EditBattlegroup,
+    /// Advanced manual battlegroup YAML editing.
+    EditBattlegroupAdvanced,
+    /// Enable vendor experimental swap profile.
+    EnableExperimentalSwap,
+    /// Back up the battlegroup database.
+    BackupDatabase,
+    /// Import a battlegroup database backup.
+    ImportDatabase,
     /// Export battlegroup logs.
     LogsExport,
     /// Export operator logs.
@@ -233,6 +245,8 @@ pub fn hyperv_initial_setup_flow() -> FlowSpec {
             "initial-setup.bat",
             "internal-scripts/initial-setup.ps1",
             "internal-scripts/bootstrap/setup",
+            "battlegroup-management/initial-setup.ps1",
+            "battlegroup-management/bootstrap/setup",
             "download/scripts/setup.sh",
             "download/scripts/setup/k3s.sh",
             "download/scripts/setup/system.sh",
@@ -704,6 +718,7 @@ pub fn battlegroup_management_flow() -> FlowSpec {
         source_scripts: &[
             "battlegroup.bat",
             "internal-scripts/battlegroup.ps1",
+            "battlegroup-management/battlegroup.ps1",
             "download/scripts/battlegroup.sh",
         ],
         steps: vec![
@@ -917,6 +932,62 @@ pub fn battlegroup_command_catalog() -> Vec<BattlegroupCommandSpec> {
             ],
         ),
         BattlegroupCommandSpec::new(
+            BattlegroupCommand::EditBattlegroupAdvanced,
+            "edit-battlegroup-advanced",
+            "Manually edit the live battlegroup YAML",
+            vec![step(
+                "bg.edit-advanced.open",
+                "Open advanced battlegroup YAML editor",
+                StepDomain::Kubernetes,
+                StepAction::Shell,
+                "kubectl edit battlegroup",
+                "Future guarded native YAML/diff editor; currently vendor capability metadata",
+                StepFlags::new(false, true),
+            )],
+        ),
+        BattlegroupCommandSpec::new(
+            BattlegroupCommand::EnableExperimentalSwap,
+            "enable-experimental-swap",
+            "Enable experimental swap memory profile",
+            vec![step(
+                "bg.swap.enable",
+                "Enable guest swap and patch BattleGroup memory",
+                StepDomain::Guest,
+                StepAction::Configure,
+                "/home/dune/.dune/bin/battlegroup enable-experimental-swap",
+                "ExperimentalSwapOrchestrator::enable",
+                StepFlags::new(false, true),
+            )],
+        ),
+        BattlegroupCommandSpec::new(
+            BattlegroupCommand::BackupDatabase,
+            "backup",
+            "Take a database backup",
+            vec![step(
+                "bg.database.backup",
+                "Take database backup",
+                StepDomain::Kubernetes,
+                StepAction::Export,
+                "/home/dune/.dune/bin/battlegroup backup",
+                "Future native database backup workflow",
+                StepFlags::new(false, true),
+            )],
+        ),
+        BattlegroupCommandSpec::new(
+            BattlegroupCommand::ImportDatabase,
+            "import",
+            "Import a database backup",
+            vec![step(
+                "bg.database.import",
+                "Import database backup",
+                StepDomain::Kubernetes,
+                StepAction::Import,
+                "/home/dune/.dune/bin/battlegroup import",
+                "Future guarded native database import workflow",
+                StepFlags::new(false, true),
+            )],
+        ),
+        BattlegroupCommandSpec::new(
             BattlegroupCommand::LogsExport,
             "logs-export",
             "Retrieves logs from all pods in the selected battlegroup",
@@ -1114,6 +1185,10 @@ mod tests {
                 "stop",
                 "update",
                 "edit-battlegroup",
+                "edit-battlegroup-advanced",
+                "enable-experimental-swap",
+                "backup",
+                "import",
                 "logs-export",
                 "operator-logs-export",
                 "open-file-browser",
