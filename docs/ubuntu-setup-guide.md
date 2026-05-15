@@ -2,6 +2,8 @@
 
 This guide explains how to prepare a remote Ubuntu server for Dune Dedicated Server Manager.
 
+If you want to install on Ubuntu without using the app, see the [Manual Ubuntu Server Setup Guide](ubuntu-manual-setup-guide.md).
+
 ## 1. Create an SSH key
 
 Generate an SSH key pair, or use the app's Tools page to generate one.

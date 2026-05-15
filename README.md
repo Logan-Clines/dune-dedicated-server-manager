@@ -30,6 +30,7 @@ https://github.com/adainrivers/dune-dedicated-server-manager/issues
 ## Server Setup Guides
 
 - [Remote Ubuntu setup guide](docs/ubuntu-setup-guide.md)
+- [Manual Ubuntu setup guide](docs/ubuntu-manual-setup-guide.md)
 - [Local Hyper-V setup guide](docs/hyper-v-setup-guide.md)
 
 Required game ports:
