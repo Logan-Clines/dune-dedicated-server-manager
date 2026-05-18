@@ -1,6 +1,6 @@
 :root {
   font-family:
-    "Aptos", "Segoe UI Variable", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+    "Plus Jakarta Sans", "Aptos", "Segoe UI Variable", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -189,11 +189,17 @@ button:disabled,
 
 .setup-section {
   padding: var(--space-4);
-  border: 1px solid var(--gray-a5);
   border-radius: var(--radius-4);
   background:
-    linear-gradient(145deg, var(--bronze-a3), transparent 38%),
-    var(--gray-a2);
+    linear-gradient(135deg, rgba(205, 162, 132, 0.08) 0%, transparent 40%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 100%),
+    rgba(21, 20, 19, 0.75) !important;
+  backdrop-filter: blur(16px) saturate(120%);
+  border: 1px solid rgba(205, 162, 132, 0.15) !important;
+  box-shadow:
+    0 8px 32px 0 rgba(0, 0, 0, 0.37),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .setup-order-target {
@@ -348,8 +354,23 @@ button:disabled,
 
 .server-card {
   background:
-    linear-gradient(145deg, var(--bronze-a3), transparent 36%),
-    var(--gray-a2);
+    linear-gradient(135deg, rgba(205, 162, 132, 0.08) 0%, transparent 40%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 100%),
+    rgba(21, 20, 19, 0.75) !important;
+  backdrop-filter: blur(16px) saturate(120%);
+  border: 1px solid rgba(205, 162, 132, 0.15) !important;
+  box-shadow:
+    0 8px 32px 0 rgba(0, 0, 0, 0.37),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.server-card:hover {
+  border-color: rgba(205, 162, 132, 0.3) !important;
+  box-shadow:
+    0 12px 40px 0 rgba(0, 0, 0, 0.5),
+    0 0 12px 1px rgba(205, 162, 132, 0.05),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
 }
 
 .server-error {
@@ -556,5 +577,77 @@ button:disabled,
 }
 
 .mono {
-  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+/* --- Visual Upgrades: Glows, Tunnels, Progress --- */
+@keyframes pulse-emerald {
+  0% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.4); }
+  70% { box-shadow: 0 0 0 8px rgba(76, 175, 80, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
+}
+
+@keyframes pulse-amber {
+  0% { box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.4); }
+  70% { box-shadow: 0 0 0 8px rgba(255, 193, 7, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 193, 7, 0); }
+}
+
+.glow-indicator-running {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #4CAF50;
+  display: inline-block;
+  animation: pulse-emerald 2s infinite;
+  margin-right: 8px;
+  box-shadow: 0 0 4px #4CAF50;
+}
+
+.glow-indicator-pending {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #FFC107;
+  display: inline-block;
+  animation: pulse-amber 2s infinite;
+  margin-right: 8px;
+  box-shadow: 0 0 4px #FFC107;
+}
+
+.glow-indicator-stopped {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #9e9e9e;
+  display: inline-block;
+  margin-right: 8px;
+}
+
+@keyframes dash {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+.tunnel-flow-line {
+  stroke-dasharray: 4, 2;
+  animation: dash 1s linear infinite;
+  stroke: var(--emerald-9);
+}
+
+.memory-gauge-container {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-3);
+  transition: all 0.3s ease;
+}
+
+.memory-gauge-container:hover {
+  border-color: rgba(205, 162, 132, 0.2);
+}
+
+.wizard-steps-indicator {
+  border-bottom: 1px solid var(--gray-a4);
+  background: var(--gray-a2);
 }
