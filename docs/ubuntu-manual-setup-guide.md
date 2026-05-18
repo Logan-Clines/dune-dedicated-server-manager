@@ -678,12 +678,73 @@ After setup finishes, leave the `dune` shell:
 exit
 ```
 
-Remove any custom scheduler references from the created BattleGroup. The Ubuntu setup path in the manager does this because fresh k3s hosts should use the default Kubernetes scheduler.
+Back in your root shell, patch the created BattleGroup so the gateway declares your player-facing IP instead of the vendor template's default loopback address. This value is surfaced through Funcom server-list metadata and is separate from ordinary ICMP ping.
 
 ```sh
+PLAYER_IP="YOUR_PUBLIC_OR_PLAYER_FACING_IP"
 NS="$(sudo kubectl get ns --no-headers -o custom-columns=NAME:.metadata.name | grep '^funcom-seabass-' | head -n1)"
 BG="${NS#funcom-seabass-}"
 
+if [ -f "/home/dune/.dune/$BG.yaml" ]; then
+  sudo python3 - "/home/dune/.dune/$BG.yaml" "$PLAYER_IP" <<'PY'
+import sys
+
+path, player_ip = sys.argv[1], sys.argv[2]
+lines = open(path, encoding="utf-8").read().splitlines(keepends=True)
+next_is_host_ip = False
+replaced = 0
+
+for index, line in enumerate(lines):
+    if "name: HOST_DATACENTER_IP_ADDRESS" in line:
+        next_is_host_ip = True
+        continue
+    if next_is_host_ip:
+        if "value:" in line:
+            indent = line[: len(line) - len(line.lstrip())]
+            newline = "\n" if line.endswith("\n") else ""
+            lines[index] = f"{indent}value: {player_ip}{newline}"
+            replaced += 1
+        next_is_host_ip = False
+
+if replaced == 0:
+    raise SystemExit("No HOST_DATACENTER_IP_ADDRESS values were found in the generated world manifest")
+
+open(path, "w", encoding="utf-8").writelines(lines)
+PY
+fi
+
+PATCH="$(
+  sudo kubectl get battlegroup "$BG" -n "$NS" -o json \
+    | PLAYER_IP="$PLAYER_IP" python3 -c 'import json,os,sys
+bg=json.load(sys.stdin)
+player_ip=os.environ["PLAYER_IP"]
+ops=[]
+def esc(part):
+    return str(part).replace("~","~0").replace("/","~1")
+def walk(node,path):
+    if isinstance(node,dict):
+        envs=node.get("envVars")
+        if isinstance(envs,list):
+            for i,item in enumerate(envs):
+                if isinstance(item,dict) and item.get("name")=="HOST_DATACENTER_IP_ADDRESS":
+                    ops.append({"op":"replace" if "value" in item else "add","path":"/"+"/".join(esc(p) for p in path+["envVars",i,"value"]),"value":player_ip})
+        for key,value in node.items():
+            walk(value,path+[key])
+    elif isinstance(node,list):
+        for i,value in enumerate(node):
+            walk(value,path+[i])
+walk(bg.get("spec",{}),["spec"])
+print(json.dumps(ops))'
+)"
+
+if [ "$PATCH" != "[]" ]; then
+  sudo kubectl patch battlegroup "$BG" -n "$NS" --type=json -p "$PATCH"
+fi
+```
+
+Remove any custom scheduler references from the created BattleGroup. The Ubuntu setup path in the manager does this because fresh k3s hosts should use the default Kubernetes scheduler.
+
+```sh
 PATCH="$(
   sudo kubectl get battlegroup "$BG" -n "$NS" -o json \
     | python3 -c 'import json,sys

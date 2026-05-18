@@ -201,6 +201,7 @@ struct CreateWorldOutput {
 
 fn validate_world_manifest_request(request: &WorldManifestRequest) -> CommandResult<()> {
     validate_kube_arg(&request.world_unique_name, "world unique name")?;
+    validate_ipv4ish(&request.player_ip, "player-facing IP")?;
     if request.world_name.trim().is_empty()
         || request.world_name.chars().count() > 50
         || request.world_name.contains('\n')
@@ -221,6 +222,15 @@ fn validate_world_manifest_request(request: &WorldManifestRequest) -> CommandRes
         return Err(failure("Self-host token is required"));
     }
     Ok(())
+}
+
+fn validate_ipv4ish(value: &str, label: &str) -> CommandResult<()> {
+    let parts = value.trim().split('.').collect::<Vec<_>>();
+    if parts.len() == 4 && parts.iter().all(|part| part.parse::<u8>().is_ok()) {
+        Ok(())
+    } else {
+        Err(failure(format!("{label} must be an IPv4 address")))
+    }
 }
 
 fn with_guest_path(script: &str) -> String {
@@ -482,6 +492,7 @@ fn create_world_script(request: &WorldManifestRequest) -> String {
     script.push_str("G_SCRIPT_PATH=/home/dune/.dune/download/scripts/setup\n");
     script.push_str(&shell_value("WORLD_NAME", request.world_name.trim()));
     script.push_str(&shell_value("WORLD_REGION", request.world_region.trim()));
+    script.push_str(&shell_value("PLAYER_IP", request.player_ip.trim()));
     script.push_str(&shell_value(
         "WORLD_UNIQUE_NAME",
         &request.world_unique_name,
@@ -508,6 +519,24 @@ sed -i "s/{WORLD_IMAGE_TAG}/0-0-shipping/g" "$G_SPEC_PATH/$WORLD_UNIQUE_NAME.yam
 sed -i "s/{FLS_SECRET}/$(escape_sed "$FLS_TOKEN")/g" "$G_SPEC_PATH/$WORLD_UNIQUE_NAME.yaml"
 sed -i "s/{FLS_SECRET}/$(escape_sed "$FLS_TOKEN")/g" "$G_SPEC_PATH/$WORLD_UNIQUE_NAME-fls-secret.yaml"
 sed -i "s|{RMQ_SECRET}|$(escape_sed_pipe "$RMQ_SECRET")|g" "$G_SPEC_PATH/$WORLD_UNIQUE_NAME-rmq-secret.yaml"
+world_tmp="$G_SPEC_PATH/$WORLD_UNIQUE_NAME.yaml.tmp"
+awk -v player_ip="$PLAYER_IP" '
+  next_is_host_ip {
+    if ($0 ~ /^[[:space:]]*value:/) {
+      sub(/value:.*/, "value: " player_ip)
+      replaced++
+    }
+    next_is_host_ip=0
+  }
+  /name:[[:space:]]*HOST_DATACENTER_IP_ADDRESS/ { next_is_host_ip=1 }
+  { print }
+  END { if (replaced == 0) exit 42 }
+' "$G_SPEC_PATH/$WORLD_UNIQUE_NAME.yaml" > "$world_tmp" || {
+  rm -f "$world_tmp"
+  echo "No HOST_DATACENTER_IP_ADDRESS values were found in world manifest" >&2
+  exit 1
+}
+mv "$world_tmp" "$G_SPEC_PATH/$WORLD_UNIQUE_NAME.yaml"
 elapsed=0
 while [ "$elapsed" -lt 300 ]; do
   all_ready=true
@@ -744,6 +773,7 @@ mod tests {
             .create_world(&WorldManifestRequest {
                 world_name: "Adain".to_string(),
                 world_region: "Europe Test".to_string(),
+                player_ip: "203.0.113.10".to_string(),
                 world_unique_name: "sh-host-abcdef".to_string(),
                 self_host_token: "header.payload.signature".to_string(),
             })
@@ -754,6 +784,8 @@ mod tests {
         assert!(script.contains("printf '{\"namespace\":\"%s\",\"battlegroupName\":\"%s\"}"));
         assert!(script.contains("kubectl create ns \"$NS\" >&2"));
         assert!(script.contains("s/{WORLD_IMAGE_TAG}/0-0-shipping/g"));
+        assert!(script.contains("HOST_DATACENTER_IP_ADDRESS"));
+        assert!(script.contains("PLAYER_IP=$(cat <<"));
         assert!(!script.contains(
             "WORLD_IMAGE_TAG=$(cat \"$G_SPEC_PATH/download/images/battlegroup/version.txt\")"
         ));
@@ -770,6 +802,7 @@ mod tests {
             .create_world(&WorldManifestRequest {
                 world_name: "Great Banana".to_string(),
                 world_region: "Europe Test".to_string(),
+                player_ip: "203.0.113.10".to_string(),
                 world_unique_name: "sh-host-abcdef".to_string(),
                 self_host_token: "header.payload.signature".to_string(),
             })
@@ -885,6 +918,7 @@ mod tests {
         let result = provider.create_world(&WorldManifestRequest {
             world_name: "Adain".to_string(),
             world_region: "Mars".to_string(),
+            player_ip: "203.0.113.10".to_string(),
             world_unique_name: "sh-host-abcdef".to_string(),
             self_host_token: "token".to_string(),
         });

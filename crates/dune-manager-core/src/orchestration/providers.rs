@@ -400,6 +400,8 @@ pub struct WorldManifestRequest {
     pub world_name: String,
     /// Vendor region label.
     pub world_region: String,
+    /// Player-facing IPv4 address advertised through gateway metadata.
+    pub player_ip: String,
     /// Unique Kubernetes battlegroup/world name.
     pub world_unique_name: String,
     /// Self-host token used by the vendor manifest.

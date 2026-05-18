@@ -1754,6 +1754,7 @@ fn run_remote_ubuntu_setup(
     let world_request = WorldManifestRequest {
         world_name: plan.world_name.clone(),
         world_region: plan.world_region.clone(),
+        player_ip: plan.player_ip.clone(),
         world_unique_name: plan.world_unique_name(),
         self_host_token: plan.self_host_token.clone(),
     };
@@ -2447,6 +2448,7 @@ fn start_server_tunnel_inner(
         "director" => discover_director_tunnel_port(&target, &request.namespace)?,
         "fileBrowser" => 18888,
         "database" => discover_database_tunnel_port(&target, &request.namespace)?,
+        "pgHero" => discover_pg_hero_tunnel_port(&target, &request.namespace)?,
         _ => unreachable!(),
     };
     let local_port = pick_available_local_port()?;
@@ -2614,6 +2616,7 @@ fn normalize_tunnel_service(service: &str) -> Result<String, String> {
         "director" => Ok("director".to_string()),
         "fileBrowser" => Ok("fileBrowser".to_string()),
         "database" => Ok("database".to_string()),
+        "pgHero" => Ok("pgHero".to_string()),
         other => Err(format!("Unsupported tunnel service: {other}")),
     }
 }
@@ -2690,6 +2693,46 @@ fn discover_database_tunnel_port(target: &OpenSshTarget, namespace: &str) -> Res
         }
     }
     Ok(DEFAULT_DATABASE_PORT)
+}
+
+fn discover_pg_hero_tunnel_port(target: &OpenSshTarget, namespace: &str) -> Result<u16, String> {
+    const DEFAULT_PG_HERO_PORT: u16 = 21111;
+
+    let namespace = namespace.trim();
+    if namespace.is_empty() {
+        return Err(
+            "BattleGroup namespace is required before starting the PgHero tunnel.".to_string(),
+        );
+    }
+    let runner = OpenSshRunner::new(target.clone());
+    let value = runner
+        .run_json(
+            &format!(
+                "sudo kubectl get pods -n {} -l role=igw-database-pghero -o json",
+                sh_single_quoted(namespace)
+            ),
+            "PgHero pod list",
+        )
+        .map_err(command_error_message)?;
+    for pod in value["items"].as_array().cloned().unwrap_or_default() {
+        for container in pod["spec"]["containers"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+        {
+            for env in container["env"].as_array().cloned().unwrap_or_default() {
+                if env["name"].as_str() == Some("PORT") {
+                    if let Some(port) = env["value"]
+                        .as_str()
+                        .and_then(|value| value.parse::<u16>().ok())
+                    {
+                        return Ok(port);
+                    }
+                }
+            }
+        }
+    }
+    Ok(DEFAULT_PG_HERO_PORT)
 }
 
 fn pick_available_local_port() -> Result<u16, String> {

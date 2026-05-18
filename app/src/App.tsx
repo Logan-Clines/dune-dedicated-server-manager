@@ -374,7 +374,7 @@ type RemoteComponentLogResult = {
   output: string;
 };
 
-type TunnelService = "director" | "fileBrowser" | "database";
+type TunnelService = "director" | "fileBrowser" | "database" | "pgHero";
 
 type ServerTunnelStatus = {
   tunnelId: string;
@@ -2398,6 +2398,7 @@ function ServerCard({
         canStartDirectorTunnel={!!battlegroup && !battlegroup.stop && isDirectorReadyPhase(battlegroup.directorPhase)}
         canStartFileBrowserTunnel={!!battlegroup && !battlegroup.stop}
         canStartDatabaseTunnel={!!battlegroup && !battlegroup.stop}
+        canStartPgHeroTunnel={!!battlegroup && !battlegroup.stop}
         tunnels={tunnels}
         tunnelBusy={tunnelBusy}
         onStartTunnel={onStartTunnel}
@@ -2667,6 +2668,7 @@ function RemoteServerCard({
           canStartDirectorTunnel={!!liveStatus && !liveStatus.battlegroup.stop && isDirectorReadyPhase(liveStatus.battlegroup.directorPhase)}
           canStartFileBrowserTunnel={!!liveStatus && !liveStatus.battlegroup.stop}
           canStartDatabaseTunnel={!!liveStatus && !liveStatus.battlegroup.stop}
+          canStartPgHeroTunnel={!!liveStatus && !liveStatus.battlegroup.stop}
           tunnels={tunnels}
           tunnelBusy={tunnelBusy}
           onStartTunnel={onStartTunnel}
@@ -2728,6 +2730,7 @@ function ServerTunnelControls({
   canStartDirectorTunnel,
   canStartFileBrowserTunnel,
   canStartDatabaseTunnel,
+  canStartPgHeroTunnel,
   tunnels,
   tunnelBusy,
   onStartTunnel,
@@ -2744,6 +2747,7 @@ function ServerTunnelControls({
   canStartDirectorTunnel: boolean;
   canStartFileBrowserTunnel: boolean;
   canStartDatabaseTunnel: boolean;
+  canStartPgHeroTunnel: boolean;
   tunnels: Record<string, ServerTunnelStatus>;
   tunnelBusy: Record<string, boolean>;
   onStartTunnel?: (request: ServerTunnelStartRequest) => void;
@@ -2754,6 +2758,7 @@ function ServerTunnelControls({
     { service: "director", label: "Director UI" },
     { service: "fileBrowser", label: "File Browser" },
     { service: "database", label: "Postgres" },
+    { service: "pgHero", label: "PgHero" },
   ];
   return (
     <Box className="tunnel-controls" mt="3">
@@ -2765,6 +2770,8 @@ function ServerTunnelControls({
           const serviceAvailable =
             service === "director"
               ? canStartDirectorTunnel
+              : service === "pgHero"
+                ? canStartPgHeroTunnel
               : service === "database"
                 ? canStartDatabaseTunnel
                 : canStartFileBrowserTunnel;
@@ -4545,6 +4552,9 @@ function tunnelServiceLabel(service: TunnelService): string {
   }
   if (service === "database") {
     return "Postgres";
+  }
+  if (service === "pgHero") {
+    return "PgHero";
   }
   return "File Browser";
 }

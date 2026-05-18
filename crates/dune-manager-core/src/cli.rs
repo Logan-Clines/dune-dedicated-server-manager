@@ -445,6 +445,7 @@ fn run_cli(args: Vec<String>) -> CommandResult<Value> {
             let created = provider.create_world(&WorldManifestRequest {
                 world_name: plan.world_name.clone(),
                 world_region: plan.world_region.clone(),
+                player_ip: plan.player_ip.clone(),
                 world_unique_name: plan.world_unique_name(),
                 self_host_token: plan.self_host_token.clone(),
             })?;

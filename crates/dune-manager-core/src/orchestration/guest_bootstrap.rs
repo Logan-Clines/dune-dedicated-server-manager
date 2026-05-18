@@ -205,6 +205,7 @@ where
         let world = self.provider.create_world(&WorldManifestRequest {
             world_name: plan.world_name.clone(),
             world_region: plan.world_region.clone(),
+            player_ip: plan.player_ip.clone(),
             world_unique_name: world_unique_name.clone(),
             self_host_token: plan.self_host_token.clone(),
         })?;
