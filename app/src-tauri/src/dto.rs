@@ -27,7 +27,7 @@ pub struct ServerTunnelStartRequest {
     pub server_kind: String,
     pub service: String,
     pub host: String,
-    pub user: Option<String>,
+    pub user: String,
     pub key_path: Option<String>,
     pub namespace: String,
 }

@@ -197,8 +197,8 @@ fn remote_record_from_battlegroup(
     let user = request
         .user
         .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("root")
+        .map(str::trim)
+        .unwrap_or_default()
         .to_string();
     Some(crate::dto::RemoteServerRecord {
         id: remote_record_id(&server_type, &request.host, request.key_path.as_deref()),

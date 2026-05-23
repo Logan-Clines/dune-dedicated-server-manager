@@ -17,7 +17,7 @@ pub fn tunnel_target(request: &ServerTunnelStartRequest) -> Result<RusshTarget, 
                         .trim()
                         .to_string(),
                 ),
-                request.user.as_deref().unwrap_or("root").trim().to_string(),
+                request.user.trim().to_string(),
                 request.host.trim().to_string(),
             );
             target.validate().map_err(|err| err.message)?;

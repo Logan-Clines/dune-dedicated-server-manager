@@ -29,13 +29,6 @@ impl TauriOperationSink {
         }
     }
 
-    pub fn for_server(app: AppHandle, server_id: impl Into<String>) -> Self {
-        Self {
-            app,
-            server_id: Some(server_id.into()),
-        }
-    }
-
     pub fn info(&self, scope: impl Into<String>, message: impl Into<String>) {
         self.emit_level("info", scope, message);
     }

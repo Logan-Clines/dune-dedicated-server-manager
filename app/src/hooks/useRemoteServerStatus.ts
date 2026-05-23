@@ -12,6 +12,7 @@ import {
 import { persistRemoteServers, upsertRemoteServer } from "../services/storage";
 import type { LogRow } from "../types/log";
 import type {
+  RemoteBattlegroupStatus,
   RemoteServerComponent,
   RemoteServerRecord,
   RemoteServerStatus,
@@ -81,9 +82,7 @@ export function useRemoteServerStatus({ appendLogRow, setRemoteServers }: UseRem
       appendLogRow(
         log.info(
           "remote.status",
-          `${liveServer.battlegroupName}: ${status.battlegroup.phase || "unknown"}, server group ${
-            status.battlegroup.serverGroupPhase || "unknown"
-          }, Director ${status.battlegroup.directorPhase || "unknown"}.`,
+          buildStatusLogLine(liveServer.name, status.battlegroup),
           liveServer.id,
         ),
       );
@@ -173,4 +172,16 @@ export function useRemoteServerStatus({ appendLogRow, setRemoteServers }: UseRem
     runRemoteBattlegroupAction,
     clearStatusForServer,
   };
+}
+
+function buildStatusLogLine(name: string, bg: RemoteBattlegroupStatus): string {
+  const parts: string[] = [
+    `${name}: ${bg.phase || "unknown"}`,
+    `server group ${bg.serverGroupPhase || "unknown"}`,
+  ];
+  if (bg.databasePhase) parts.push(`DB ${bg.databasePhase}`);
+  parts.push(`Director ${bg.directorPhase || "unknown"}`);
+  if (bg.uptime) parts.push(`up ${bg.uptime}`);
+  if (bg.stop) parts.push("STOP");
+  return parts.join(", ") + ".";
 }

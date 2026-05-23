@@ -11,13 +11,13 @@ pub async fn detect_remote_ubuntu_servers(
     tauri::async_runtime::spawn_blocking(move || {
         let request = RemoteConnectionRequest {
             server_type: Some("ubuntu".to_string()),
-            user: Some("root".to_string()),
             ..request
         };
+        let user = request.user.clone().unwrap_or_default();
         let runner = runner_for_remote_kind(
             request.server_type.as_deref(),
             request.host.clone(),
-            request.user.as_deref().unwrap_or("root").to_string(),
+            user,
             request.key_path.clone(),
         )?;
         let value = runner
