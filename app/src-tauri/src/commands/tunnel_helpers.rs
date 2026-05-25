@@ -36,15 +36,16 @@ pub fn normalize_tunnel_service(service: &str) -> Result<String, String> {
         "fileBrowser" => Ok("fileBrowser".to_string()),
         "database" => Ok("database".to_string()),
         "pgHero" => Ok("pgHero".to_string()),
+        "managementApi" => Ok("managementApi".to_string()),
         other => Err(format!("Unsupported tunnel service: {other}")),
     }
 }
 
 pub fn tunnel_url(service: &str, local_port: u16) -> String {
-    if service == "database" {
-        format!("postgresql://127.0.0.1:{local_port}/dune")
-    } else {
-        format!("http://127.0.0.1:{local_port}/")
+    match service {
+        "database" => format!("postgresql://127.0.0.1:{local_port}/dune"),
+        "managementApi" => format!("http://127.0.0.1:{local_port}/api"),
+        _ => format!("http://127.0.0.1:{local_port}/"),
     }
 }
 

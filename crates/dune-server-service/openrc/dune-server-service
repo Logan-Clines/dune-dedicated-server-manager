@@ -1,0 +1,31 @@
+#!/sbin/openrc-run
+# Alpine OpenRC init script for the Dune server management service.
+
+name="dune-server-service"
+description="Dune server management service (Rust)"
+
+command="/opt/dune-server-service/dune-server-service"
+command_user="dune:dune"
+pidfile="/run/dune-server-service.pid"
+
+supervisor="supervise-daemon"
+respawn_delay=10
+respawn_max=0
+# supervise-daemon redirects stdout/stderr to the file so we can read tracing
+# output during boot/crash diagnosis.
+supervise_daemon_args="--stdout /var/log/dune-server-service.log --stderr /var/log/dune-server-service.log"
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    checkpath --directory --owner dune:dune --mode 0755 /home/dune/.dune/state
+    if [ -f /etc/dune-server-service.env ]; then
+        set -a
+        # shellcheck disable=SC1091
+        . /etc/dune-server-service.env
+        set +a
+    fi
+}

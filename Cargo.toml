@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/dune-manager-core", "app/src-tauri"]
+members = ["crates/dune-manager-core", "crates/dune-server-service", "app/src-tauri"]
 resolver = "2"
 
 [workspace.dependencies]

@@ -18,8 +18,72 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  linux-service-binary:
+    name: Build dune-server-service (musl)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
+      - name: Install cargo-zigbuild
+        run: cargo install --locked cargo-zigbuild
+
+      - name: Resolve release version
+        shell: bash
+        env:
+          WORKFLOW_VERSION: ${{ inputs.version }}
+        run: |
+          version="$WORKFLOW_VERSION"
+          if [ -z "$version" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          if [ -z "$version" ]; then
+            echo "could not resolve release version" >&2
+            exit 1
+          fi
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=v$version" >> "$GITHUB_ENV"
+
+      - name: Build musl binary
+        run: |
+          cargo zigbuild -p dune-server-service --release --target x86_64-unknown-linux-musl
+          strip target/x86_64-unknown-linux-musl/release/dune-server-service
+
+      - name: Stage release artifacts
+        run: |
+          mkdir -p release-artifacts
+          cp target/x86_64-unknown-linux-musl/release/dune-server-service release-artifacts/dune-server-service
+          cp crates/dune-server-service/systemd/dune-server-service.service release-artifacts/dune-server-service.service
+
+      - name: Upload artifact for desktop bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: dune-server-service-musl
+          path: release-artifacts/
+          retention-days: 7
+
+      - name: Attach to GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: |
+            release-artifacts/dune-server-service
+            release-artifacts/dune-server-service.service
+
   desktop-app:
     name: Build ${{ matrix.name }} app
+    needs: linux-service-binary
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
@@ -63,6 +127,12 @@ jobs:
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci
+
+      - name: Download bundled dune-server-service binary
+        uses: actions/download-artifact@v4
+        with:
+          name: dune-server-service-musl
+          path: app/src-tauri/binaries/
 
       - name: Resolve release version
         shell: pwsh

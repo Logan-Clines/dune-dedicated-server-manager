@@ -1,0 +1,30 @@
+[Unit]
+Description=Dune server management service (Rust)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/dune-server-service/dune-server-service
+EnvironmentFile=-/etc/dune-server-service.env
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/dune/.local/bin"
+Restart=on-failure
+RestartSec=10
+User=dune
+Group=dune
+
+ReadWritePaths=/home/dune/.dune /tmp /funcom/artifacts/database-dumps
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::commands::shared::sh_single_quoted;
 use crate::commands::status_helpers::{pod_component, server_resource_components};
+use crate::commands::status_naming::friendly_map_name;
 use crate::dto::{
     RemoteBattlegroupServerStat, RemoteBattlegroupStatus, RemoteServerComponent,
     RemoteServerPackageStatus, RemoteServerStatus,
@@ -40,7 +41,7 @@ pub fn read_remote_server_status(
                 .server_stats
                 .into_iter()
                 .map(|row| RemoteBattlegroupServerStat {
-                    map: row.map,
+                    map: friendly_map_name(&row.map, &row.map),
                     phase: row.phase,
                     ready: row.ready,
                     players: row.players,

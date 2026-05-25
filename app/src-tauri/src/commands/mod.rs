@@ -2,8 +2,10 @@ mod battlegroup;
 mod component;
 mod discovery;
 mod logs;
+mod management_api;
+mod management_service;
 mod preflight;
-mod shared;
+pub(crate) mod shared;
 mod status;
 mod status_data;
 mod status_helpers;
@@ -18,6 +20,13 @@ pub use battlegroup::{
 pub use component::{remote_component_log_tail, restart_remote_component};
 pub use discovery::detect_remote_ubuntu_servers;
 pub use logs::{get_logs_folder, record_operation_log};
+pub use management_api::{
+    ms_cluster, ms_health, ms_history, ms_list_commands, ms_list_logs, ms_list_runs, ms_publish,
+    ms_search_items, ms_search_players, ms_search_vehicles, ms_trigger_run,
+};
+pub use management_service::{
+    install_management_service, management_service_status, uninstall_management_service,
+};
 pub use preflight::check_remote_sudo;
 pub use status::{remote_server_components, remote_server_status};
 pub use tunnel::{

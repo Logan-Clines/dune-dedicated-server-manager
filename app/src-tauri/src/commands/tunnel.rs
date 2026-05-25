@@ -141,6 +141,7 @@ fn start_server_tunnel_inner(
         "fileBrowser" => 18888,
         "database" => discover_database_tunnel_port(&target, &request.namespace)?,
         "pgHero" => discover_pg_hero_tunnel_port(&target, &request.namespace)?,
+        "managementApi" => 8787,
         _ => unreachable!(),
     };
 

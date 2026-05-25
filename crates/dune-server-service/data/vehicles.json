@@ -1,0 +1,65 @@
+[
+  {
+    "id": "Sandbike",
+    "actor_class": "/Game/Dune/Systems/Vehicles/Blueprints/GroundVehicles/BP_Sandbike_CHOAM.BP_Sandbike_CHOAM_C",
+    "templates": [
+      "T0"
+    ]
+  },
+  {
+    "id": "Buggy",
+    "actor_class": "/Game/Dune/Systems/Vehicles/Blueprints/GroundVehicles/BP_Buggy_CHOAM.BP_Buggy_CHOAM_C",
+    "templates": [
+      "T0"
+    ]
+  },
+  {
+    "id": "Tank",
+    "actor_class": "/Game/Dune/Systems/Vehicles/Blueprints/GroundVehicles/BP_Tank_CHOAM.BP_Tank_CHOAM_C",
+    "templates": [
+      "T0"
+    ]
+  },
+  {
+    "id": "Sandcrawler",
+    "actor_class": "/Game/Dune/Systems/Vehicles/Blueprints/GroundVehicles/BP_SandCrawler_CHOAM.BP_SandCrawler_CHOAM_C",
+    "templates": [
+      "T0"
+    ]
+  },
+  {
+    "id": "OrnithopterLight",
+    "actor_class": "/Game/Dune/Systems/Vehicles/Blueprints/FlyingVehicles/BP_LightOrnithopter_Choam.BP_LightOrnithopter_Choam_C",
+    "templates": [
+      "T0"
+    ]
+  },
+  {
+    "id": "OrnithopterMedium",
+    "actor_class": "/Game/Dune/Systems/Vehicles/Blueprints/FlyingVehicles/BP_MediumOrnithopter_CHOAM.BP_MediumOrnithopter_CHOAM_C",
+    "templates": [
+      "T0"
+    ]
+  },
+  {
+    "id": "OrnithopterTransport",
+    "actor_class": "/Game/Dune/Systems/Vehicles/Blueprints/FlyingVehicles/BP_TransportOrnithopter_CHOAM.BP_TransportOrnithopter_CHOAM_C",
+    "templates": [
+      "T0"
+    ]
+  },
+  {
+    "id": "TreadWheel",
+    "actor_class": "/Game/Dune/Systems/Vehicles/Blueprints/GroundVehicles/BP_TreadWheel.BP_TreadWheel_C",
+    "templates": [
+      "T4_Passenger"
+    ]
+  },
+  {
+    "id": "ContainerVehicle",
+    "actor_class": "/Game/Dune/Systems/Vehicles/Blueprints/GroundVehicles/BP_ContainerVehicle.BP_ContainerVehicle_C",
+    "templates": [
+      "Container"
+    ]
+  }
+]

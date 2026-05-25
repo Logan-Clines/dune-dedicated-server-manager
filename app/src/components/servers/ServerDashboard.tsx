@@ -13,6 +13,7 @@ import Metric from "../ui/Metric";
 import ServerStatsTable from "./ServerStatsTable";
 import ServerTunnelControls from "./ServerTunnelControls";
 import CustomTunnelControls from "./CustomTunnelControls";
+import ManagementServiceCard from "../management/ManagementServiceCard";
 
 export type ServerDashboardProps = {
   server: RemoteServerRecord;
@@ -154,6 +155,7 @@ export default function ServerDashboard({
         onStopTunnel={onStopTunnel}
         onOpenTunnel={onOpenTunnel}
       />
+      <ManagementServiceCard server={server} />
     </Flex>
   );
 }

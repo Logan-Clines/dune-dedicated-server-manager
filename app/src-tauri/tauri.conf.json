@@ -28,6 +28,11 @@
     "active": true,
     "targets": ["nsis"],
     "createUpdaterArtifacts": false,
+    "resources": {
+      "binaries/dune-server-service": "binaries/dune-server-service",
+      "binaries/dune-server-service.service": "binaries/dune-server-service.service",
+      "binaries/dune-server-service.openrc": "binaries/dune-server-service.openrc"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -1,0 +1,6 @@
+# Populated by CI from the `linux-service-binary` job artifact, or locally
+# via `cargo zigbuild -p dune-server-service --release --target
+# x86_64-unknown-linux-musl` + manual copy. Not tracked.
+dune-server-service
+dune-server-service.service
+dune-server-service.openrc

@@ -1,6 +1,6 @@
 import type { RemoteServerKind } from "./server";
 
-export type TunnelService = "director" | "fileBrowser" | "database" | "pgHero";
+export type TunnelService = "director" | "fileBrowser" | "database" | "pgHero" | "managementApi";
 
 export type CustomTunnelProtocol = "http" | "https" | "postgresql";
 

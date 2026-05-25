@@ -1,0 +1,259 @@
+use std::time::Duration;
+
+use reqwest::Client;
+use serde_json::Value;
+use tauri::Manager;
+
+use crate::state::TunnelRegistry;
+
+pub fn ensure_client(app: &tauri::AppHandle) -> Client {
+    if let Some(client) = app.try_state::<Client>() {
+        return client.inner().clone();
+    }
+    let client = Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .expect("reqwest client builds");
+    app.manage(client.clone());
+    client
+}
+
+fn tunnel_local_port(registry: &TunnelRegistry, tunnel_id: &str) -> Result<u16, String> {
+    let tunnels = registry
+        .tunnels
+        .lock()
+        .map_err(|_| "tunnel registry unavailable".to_string())?;
+    let tunnel = tunnels
+        .get(tunnel_id.trim())
+        .ok_or_else(|| format!("no active tunnel id={tunnel_id}"))?;
+    Ok(tunnel.status.local_port)
+}
+
+async fn get_json(client: &Client, port: u16, path: &str) -> Result<Value, String> {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let resp = client.get(&url).send().await.map_err(|err| format!("GET {path}: {err}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("GET {path} -> {}", resp.status()));
+    }
+    resp.json::<Value>().await.map_err(|err| format!("decoding {path}: {err}"))
+}
+
+async fn post_json(client: &Client, port: u16, path: &str, body: &Value) -> Result<Value, String> {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let resp = client
+        .post(&url)
+        .json(body)
+        .send()
+        .await
+        .map_err(|err| format!("POST {path}: {err}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body_text = resp.text().await.unwrap_or_default();
+        return Err(format!("POST {path} -> {status}: {body_text}"));
+    }
+    resp.json::<Value>().await.map_err(|err| format!("decoding {path}: {err}"))
+}
+
+#[tauri::command]
+pub async fn ms_health(
+    app: tauri::AppHandle,
+    registry: tauri::State<'_, TunnelRegistry>,
+    tunnel_id: String,
+) -> Result<Value, String> {
+    let port = tunnel_local_port(&registry, &tunnel_id)?;
+    let client = ensure_client(&app);
+    get_json(&client, port, "/api/health").await
+}
+
+#[tauri::command]
+pub async fn ms_list_runs(
+    app: tauri::AppHandle,
+    registry: tauri::State<'_, TunnelRegistry>,
+    tunnel_id: String,
+    limit: Option<u32>,
+    task: Option<String>,
+) -> Result<Value, String> {
+    let port = tunnel_local_port(&registry, &tunnel_id)?;
+    let client = ensure_client(&app);
+    let mut path = String::from("/api/runs");
+    let mut sep = '?';
+    if let Some(l) = limit {
+        path.push(sep);
+        path.push_str(&format!("limit={l}"));
+        sep = '&';
+    }
+    if let Some(t) = task {
+        path.push(sep);
+        path.push_str(&format!("task={t}"));
+    }
+    get_json(&client, port, &path).await
+}
+
+#[tauri::command]
+pub async fn ms_list_logs(
+    app: tauri::AppHandle,
+    registry: tauri::State<'_, TunnelRegistry>,
+    tunnel_id: String,
+    limit: Option<u32>,
+    run_id: Option<i64>,
+) -> Result<Value, String> {
+    let port = tunnel_local_port(&registry, &tunnel_id)?;
+    let client = ensure_client(&app);
+    let mut path = String::from("/api/logs");
+    let mut sep = '?';
+    if let Some(l) = limit {
+        path.push(sep);
+        path.push_str(&format!("limit={l}"));
+        sep = '&';
+    }
+    if let Some(r) = run_id {
+        path.push(sep);
+        path.push_str(&format!("runId={r}"));
+    }
+    get_json(&client, port, &path).await
+}
+
+#[tauri::command]
+pub async fn ms_trigger_run(
+    app: tauri::AppHandle,
+    registry: tauri::State<'_, TunnelRegistry>,
+    tunnel_id: String,
+    task: String,
+) -> Result<Value, String> {
+    let port = tunnel_local_port(&registry, &tunnel_id)?;
+    let client = ensure_client(&app);
+    post_json(
+        &client,
+        port,
+        "/api/runs/trigger",
+        &serde_json::json!({ "task": task }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn ms_list_commands(
+    app: tauri::AppHandle,
+    registry: tauri::State<'_, TunnelRegistry>,
+    tunnel_id: String,
+) -> Result<Value, String> {
+    let port = tunnel_local_port(&registry, &tunnel_id)?;
+    let client = ensure_client(&app);
+    get_json(&client, port, "/api/admin/commands").await
+}
+
+#[tauri::command]
+pub async fn ms_search_items(
+    app: tauri::AppHandle,
+    registry: tauri::State<'_, TunnelRegistry>,
+    tunnel_id: String,
+    q: Option<String>,
+    limit: Option<u32>,
+) -> Result<Value, String> {
+    let port = tunnel_local_port(&registry, &tunnel_id)?;
+    let client = ensure_client(&app);
+    get_json(&client, port, &search_path("/api/admin/items", q.as_deref(), limit)).await
+}
+
+#[tauri::command]
+pub async fn ms_search_vehicles(
+    app: tauri::AppHandle,
+    registry: tauri::State<'_, TunnelRegistry>,
+    tunnel_id: String,
+    q: Option<String>,
+    limit: Option<u32>,
+) -> Result<Value, String> {
+    let port = tunnel_local_port(&registry, &tunnel_id)?;
+    let client = ensure_client(&app);
+    get_json(&client, port, &search_path("/api/admin/vehicles", q.as_deref(), limit)).await
+}
+
+#[tauri::command]
+pub async fn ms_search_players(
+    app: tauri::AppHandle,
+    registry: tauri::State<'_, TunnelRegistry>,
+    tunnel_id: String,
+    q: Option<String>,
+    limit: Option<u32>,
+) -> Result<Value, String> {
+    let port = tunnel_local_port(&registry, &tunnel_id)?;
+    let client = ensure_client(&app);
+    get_json(&client, port, &search_path("/api/admin/players", q.as_deref(), limit)).await
+}
+
+#[tauri::command]
+pub async fn ms_cluster(
+    app: tauri::AppHandle,
+    registry: tauri::State<'_, TunnelRegistry>,
+    tunnel_id: String,
+) -> Result<Value, String> {
+    let port = tunnel_local_port(&registry, &tunnel_id)?;
+    let client = ensure_client(&app);
+    get_json(&client, port, "/api/admin/cluster").await
+}
+
+#[tauri::command]
+pub async fn ms_history(
+    app: tauri::AppHandle,
+    registry: tauri::State<'_, TunnelRegistry>,
+    tunnel_id: String,
+    limit: Option<u32>,
+) -> Result<Value, String> {
+    let port = tunnel_local_port(&registry, &tunnel_id)?;
+    let client = ensure_client(&app);
+    let path = match limit {
+        Some(l) => format!("/api/admin/history?limit={l}"),
+        None => String::from("/api/admin/history"),
+    };
+    get_json(&client, port, &path).await
+}
+
+#[tauri::command]
+pub async fn ms_publish(
+    app: tauri::AppHandle,
+    registry: tauri::State<'_, TunnelRegistry>,
+    tunnel_id: String,
+    command: String,
+    fields: Value,
+) -> Result<Value, String> {
+    let port = tunnel_local_port(&registry, &tunnel_id)?;
+    let client = ensure_client(&app);
+    post_json(
+        &client,
+        port,
+        "/api/admin/publish",
+        &serde_json::json!({ "command": command, "fields": fields }),
+    )
+    .await
+}
+
+fn search_path(base: &str, q: Option<&str>, limit: Option<u32>) -> String {
+    let mut out = base.to_string();
+    let mut sep = '?';
+    if let Some(qq) = q {
+        out.push(sep);
+        out.push_str(&format!("q={}", urlencoding(qq)));
+        sep = '&';
+    }
+    if let Some(l) = limit {
+        out.push(sep);
+        out.push_str(&format!("limit={l}"));
+    }
+    out
+}
+
+fn urlencoding(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => out.push(c),
+            _ => {
+                let mut buf = [0u8; 4];
+                for byte in c.encode_utf8(&mut buf).bytes() {
+                    out.push_str(&format!("%{:02X}", byte));
+                }
+            }
+        }
+    }
+    out
+}
