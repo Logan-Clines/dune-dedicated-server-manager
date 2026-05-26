@@ -50,19 +50,47 @@ impl client::Handler for AcceptAllHandler {
     }
 }
 
+/// Default russh config for one-shot exec commands. 60s inactivity timeout is
+/// fine because the command itself should finish well under that.
+pub(crate) fn default_exec_config() -> Arc<client::Config> {
+    Arc::new(client::Config {
+        inactivity_timeout: Some(Duration::from_secs(60)),
+        ..client::Config::default()
+    })
+}
+
+/// Russh config for long-lived port forwarders. Disables the inactivity
+/// timeout (idle tunnels were getting silently torn down after 60s) and turns
+/// on protocol-level keepalives so intermediate NAT/firewalls keep the TCP
+/// connection alive. After `keepalive_max` consecutive missed keepalive
+/// responses (~90s) russh will mark the session dead.
+pub(crate) fn tunnel_config() -> Arc<client::Config> {
+    Arc::new(client::Config {
+        inactivity_timeout: None,
+        keepalive_interval: Some(Duration::from_secs(30)),
+        keepalive_max: 3,
+        ..client::Config::default()
+    })
+}
+
 /// Opens a TCP connection, performs the SSH handshake, and authenticates with
-/// the configured private key.
+/// the configured private key using the default exec-style config.
 pub(crate) async fn connect_and_authenticate(target: &RusshTarget) -> CommandResult<SessionHandle> {
+    connect_with_config(target, default_exec_config()).await
+}
+
+/// Like [`connect_and_authenticate`] but lets the caller supply a custom
+/// `client::Config` (e.g. the tunnel config with keepalives enabled).
+pub(crate) async fn connect_with_config(
+    target: &RusshTarget,
+    config: Arc<client::Config>,
+) -> CommandResult<SessionHandle> {
     let key_pair = load_secret_key(&target.key_path, None).map_err(|err| {
         failure(format!(
             "Failed to load ssh key {}: {err}",
             target.key_path.display()
         ))
     })?;
-    let config = Arc::new(client::Config {
-        inactivity_timeout: Some(Duration::from_secs(60)),
-        ..client::Config::default()
-    });
     let addr = (target.host.as_str(), target.port);
     let connect = tokio::time::timeout(
         Duration::from_secs(target.connect_timeout_seconds),

@@ -88,40 +88,51 @@ impl SteamCmd {
     }
 
     /// Run steamcmd against the public branch and pluck the `buildid` out of
-    /// the `app_info_print` output for the Dune app.
+    /// the `app_info_print` output for the Dune app. Retries once on cold-cache
+    /// runs where the first `app_info_update` returns an empty payload.
     pub async fn latest_public_build(&self) -> Result<AppInfoBuild> {
         let bin = self.bin.to_string_lossy().into_owned();
         let id = DUNE_APP_ID.to_string();
-        let result = run_process(
-            &bin,
-            &[
-                "+login",
-                "anonymous",
-                "+app_info_update",
-                "1",
-                "+app_info_print",
-                &id,
-                "+quit",
-            ],
-            None,
-            120,
-        )
-        .await
-        .context("invoking steamcmd app_info_print")?;
-        if result.exit_code != 0 && result.exit_code != 7 {
-            // steamcmd exits non-zero on some normal paths; only error if output looks empty.
-            if result.stdout.trim().is_empty() {
-                return Err(anyhow!(
-                    "steamcmd app_info_print failed (exit {}): {}",
-                    result.exit_code,
-                    result.stderr.trim()
-                ));
+        let mut last_stdout = String::new();
+        let mut last_stderr = String::new();
+        let mut last_exit: i32 = 0;
+        for attempt in 1..=2 {
+            let result = run_process(
+                &bin,
+                &[
+                    "+login",
+                    "anonymous",
+                    "+app_info_update",
+                    "1",
+                    "+app_info_print",
+                    &id,
+                    "+quit",
+                ],
+                None,
+                180,
+            )
+            .await
+            .context("invoking steamcmd app_info_print")?;
+            last_exit = result.exit_code;
+            last_stdout = result.stdout;
+            last_stderr = result.stderr;
+            if let Some(buildid) = parse_buildid_from_app_info(&last_stdout)
+                .or_else(|| parse_buildid_from_app_info(&last_stderr))
+            {
+                return Ok(AppInfoBuild { buildid });
+            }
+            if attempt == 1 {
+                // Cold-cache: first app_info_update sometimes just primes Steam's
+                // local cache without returning branch detail. A second pass picks
+                // it up.
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
         }
-        let buildid = parse_buildid_from_app_info(&result.stdout).ok_or_else(|| {
-            anyhow!("could not determine latest Steam buildid from app_info_print")
-        })?;
-        Ok(AppInfoBuild { buildid })
+        Err(anyhow!(
+            "could not determine latest Steam buildid from app_info_print (exit {last_exit}); stdout_tail: {tail}; stderr_tail: {err_tail}",
+            tail = tail(&last_stdout, 1200),
+            err_tail = tail(&last_stderr, 400),
+        ))
     }
 
     /// Read the local appmanifest_*.acf and pluck the local buildid.
@@ -185,6 +196,23 @@ impl SteamCmd {
     pub fn download_path(&self) -> &Path {
         &self.download_path
     }
+}
+
+/// Last `max` bytes of `s`, trimmed and prefixed with `…` if truncated. Used
+/// to include steamcmd output in error messages without flooding the log.
+/// UTF-8 safe — snaps to the next char boundary if `max` lands inside one.
+fn tail(s: &str, max: usize) -> String {
+    let trimmed = s.trim();
+    if trimmed.len() <= max {
+        return trimmed.replace('\n', " ⏎ ");
+    }
+    let mut start = trimmed.len() - max;
+    while start < trimmed.len() && !trimmed.is_char_boundary(start) {
+        start += 1;
+    }
+    let mut out = String::from("…");
+    out.push_str(&trimmed[start..].replace('\n', " ⏎ "));
+    out
 }
 
 /// Parse the `buildid` value from `steamcmd +app_info_print` stdout. We rely

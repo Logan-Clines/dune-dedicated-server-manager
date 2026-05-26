@@ -13,7 +13,7 @@ RestartSec=10
 User=dune
 Group=dune
 
-ReadWritePaths=/home/dune/.dune /tmp /funcom/artifacts/database-dumps
+ReadWritePaths=/home/dune/.dune /home/dune/.local /home/dune/.steam /home/dune/Steam /tmp /funcom/artifacts/database-dumps
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
@@ -23,7 +23,9 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
 LockPersonality=true
-MemoryDenyWriteExecute=true
+# MemoryDenyWriteExecute is intentionally NOT set: steamcmd's bundled 32-bit
+# steamclient.so requires writable text relocations (dlmopen → mprotect
+# PROT_WRITE), which MemoryDenyWriteExecute=true blocks.
 
 [Install]
 WantedBy=multi-user.target
