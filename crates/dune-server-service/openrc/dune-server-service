@@ -21,7 +21,9 @@ depend() {
 }
 
 start_pre() {
-    checkpath --directory --owner dune:dune --mode 0755 /home/dune/.dune/state
+    checkpath --directory --owner dune:dune --mode 0755 /home/dune/.dune
+    checkpath --directory --owner dune:dune --mode 0700 /home/dune/.dune/state
+    checkpath --file      --owner dune:dune --mode 0644 /var/log/dune-server-service.log
     export DUNE_SERVICE_HOME="${DUNE_SERVICE_HOME:-/home/dune}"
     export DUNE_DASHBOARD_PORT="${DUNE_DASHBOARD_PORT:-29187}"
     if [ -f /etc/dune-server-service.env ]; then

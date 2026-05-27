@@ -21,6 +21,7 @@ import type {
   ScheduleConfig,
 } from "../../types/management";
 import Combobox from "./Combobox";
+import DumpPruneDialog from "./DumpPruneDialog";
 
 const DIRECT_TASKS: Array<{ id: string; label: string }> = [
   { id: "backup", label: "Backup" },
@@ -51,6 +52,7 @@ export default function AutomatedTasksTab({
   const [error, setError] = useState<string | null>(null);
   const [logsByRun, setLogsByRun] = useState<Record<number, LogState>>({});
   const [noticeOpen, setNoticeOpen] = useState(false);
+  const [dumpPruneOpen, setDumpPruneOpen] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -137,6 +139,14 @@ export default function AutomatedTasksTab({
               ? "Sending restart notice…"
               : "Send restart notice…"}
           </Button>
+          <Button
+            size="1"
+            variant="surface"
+            color="red"
+            onClick={() => setDumpPruneOpen(true)}
+          >
+            Clean up database operations…
+          </Button>
         </Flex>
       </Box>
 
@@ -173,6 +183,12 @@ export default function AutomatedTasksTab({
           setNoticeOpen(false);
           await trigger("restart-notice", options as Record<string, unknown>);
         }}
+      />
+
+      <DumpPruneDialog
+        open={dumpPruneOpen}
+        onOpenChange={setDumpPruneOpen}
+        tunnelId={tunnelId}
       />
     </Box>
   );
@@ -288,6 +304,14 @@ function ScheduleSettings({
   const [warnDur, setWarnDur] = useState(1800);
   const [updateLead, setUpdateLead] = useState(1800);
   const [tz, setTz] = useState("UTC");
+  // 5-field cron (min hour dom mon dow); empty string = disabled.
+  const [backupCron, setBackupCron] = useState("");
+  const [backupCronStatus, setBackupCronStatus] = useState<
+    | { state: "idle" }
+    | { state: "validating" }
+    | { state: "ok"; tz: string; next: string[] }
+    | { state: "error"; message: string }
+  >({ state: "idle" });
 
   const refresh = useCallback(async () => {
     try {
@@ -299,6 +323,8 @@ function ScheduleSettings({
       setWarnDur(c.restartWarningDurationSecs);
       setUpdateLead(c.updateLeadSecs);
       setTz(c.restartTz);
+      setBackupCron(c.backupCron ?? "");
+      setBackupCronStatus({ state: "idle" });
       setError(null);
     } catch (err) {
       setError(String(err));
@@ -317,9 +343,38 @@ function ScheduleSettings({
     setWarnDur(config.restartWarningDurationSecs);
     setUpdateLead(config.updateLeadSecs);
     setTz(config.restartTz);
+    setBackupCron(config.backupCron ?? "");
+    setBackupCronStatus({ state: "idle" });
     setEditing(true);
     setError(null);
   }, [config]);
+
+  // Live-validate the cron expression while editing. Empty = disabled (no
+  // server round-trip). The service caps `count` at 20 and returns a parse
+  // error string when invalid; we surface either the next-fire preview or
+  // the error inline.
+  useEffect(() => {
+    if (!editing) return;
+    const trimmed = backupCron.trim();
+    if (!trimmed) {
+      setBackupCronStatus({ state: "idle" });
+      return;
+    }
+    setBackupCronStatus({ state: "validating" });
+    const handle = setTimeout(async () => {
+      try {
+        const result = await managementApi.cronPreview(tunnelId, trimmed, 5);
+        if (result.ok) {
+          setBackupCronStatus({ state: "ok", tz: result.tz, next: result.next });
+        } else {
+          setBackupCronStatus({ state: "error", message: result.error });
+        }
+      } catch (err) {
+        setBackupCronStatus({ state: "error", message: String(err) });
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [backupCron, editing, tunnelId]);
 
   const cancelEdit = useCallback(() => {
     setEditing(false);
@@ -331,6 +386,9 @@ function ScheduleSettings({
     setError(null);
     try {
       setBusyLabel("Saving…");
+      if (backupCron.trim() && backupCronStatus.state === "error") {
+        throw new Error(`Cron expression invalid: ${backupCronStatus.message}`);
+      }
       await managementApi.setConfig(tunnelId, {
         restartHour: hour,
         restartMinute: minute,
@@ -338,6 +396,7 @@ function ScheduleSettings({
         restartWarningDurationSecs: warnDur,
         updateLeadSecs: updateLead,
         restartTz: tz,
+        backupCron: backupCron.trim(),
       });
 
       setBusyLabel("Restarting service…");
@@ -383,6 +442,8 @@ function ScheduleSettings({
     warnDur,
     updateLead,
     tz,
+    backupCron,
+    backupCronStatus,
     refresh,
     server.host,
     server.user,
@@ -483,6 +544,18 @@ function ScheduleSettings({
             value={String(updateLead)}
             onChange={(e) => setUpdateLead(Number(e.target.value) || 0)}
           />
+
+          <Text size="2">Backup cron (5-field; leave empty to disable)</Text>
+          <Box>
+            <TextField.Root
+              value={backupCron}
+              onChange={(e) => setBackupCron(e.target.value)}
+              placeholder="e.g. 0 4 * * *  (every day at 04:00)"
+            />
+            <Box mt="1">
+              <CronStatusHint status={backupCronStatus} />
+            </Box>
+          </Box>
         </Box>
       ) : (
         <Box className="schedule-grid">
@@ -507,6 +580,15 @@ function ScheduleSettings({
           <Text size="2" color="gray">Update apply lead</Text>
           <Text size="2">
             {config ? `${config.updateLeadSecs}s` : "—"}
+          </Text>
+
+          <Text size="2" color="gray">Backup cron</Text>
+          <Text size="2" className="mono">
+            {config
+              ? config.backupCron && config.backupCron.trim()
+                ? config.backupCron
+                : "disabled (manual only)"
+              : "—"}
           </Text>
         </Box>
       )}
@@ -615,6 +697,52 @@ function RunRow({
         </Box>
       </Box>
     </details>
+  );
+}
+
+function CronStatusHint({
+  status,
+}: {
+  status:
+    | { state: "idle" }
+    | { state: "validating" }
+    | { state: "ok"; tz: string; next: string[] }
+    | { state: "error"; message: string };
+}) {
+  if (status.state === "idle") {
+    return (
+      <Text size="1" color="gray">
+        Empty = disabled. Standard 5-field cron (min hour day month dow) in your configured timezone.
+      </Text>
+    );
+  }
+  if (status.state === "validating") {
+    return (
+      <Text size="1" color="gray">
+        Checking…
+      </Text>
+    );
+  }
+  if (status.state === "error") {
+    return (
+      <Text size="1" color="red">
+        {status.message}
+      </Text>
+    );
+  }
+  return (
+    <Box>
+      <Text size="1" color="green">
+        Valid. Next runs ({status.tz}):
+      </Text>
+      <Flex direction="column" mt="1" gap="1">
+        {status.next.map((time) => (
+          <Text key={time} size="1" className="mono" color="gray">
+            {time}
+          </Text>
+        ))}
+      </Flex>
+    </Box>
   );
 }
 

@@ -156,6 +156,10 @@ async fn run() -> Result<()> {
     let mut restart_minute: u32 = 0;
     let mut restart_warning_frequency_secs: u64 = 600;
     let mut restart_warning_duration_secs: u64 = 1800;
+    // Backups default to OFF. Operator opts in by POSTing /api/config with a
+    // cron expression in `backupCron`.
+    let mut backup_cron: Option<cron::Schedule> = None;
+    let mut backup_cron_raw: Option<String> = None;
     if let Ok(Some(v)) = store.get_config_i64("update_lead_secs") {
         update_lead_secs = v;
     }
@@ -170,6 +174,20 @@ async fn run() -> Result<()> {
     }
     if let Ok(Some(v)) = store.get_config_i64("restart_warning_duration_secs") {
         restart_warning_duration_secs = v as u64;
+    }
+    if let Ok(Some(expr)) = store.get_config("backup_cron") {
+        let trimmed = expr.trim();
+        if !trimmed.is_empty() {
+            match dune_server_service::scheduler::schedule::parse_cron(trimmed) {
+                Ok(schedule) => {
+                    backup_cron = Some(schedule);
+                    backup_cron_raw = Some(trimmed.to_string());
+                }
+                Err(err) => {
+                    tracing::warn!(stored = %trimmed, error = %err, "ignoring invalid stored backup_cron");
+                }
+            }
+        }
     }
     let mut effective_tz = cfg.time_zone;
     if let Ok(Some(tz_name)) = store.get_config("restart_tz") {
@@ -186,6 +204,7 @@ async fn run() -> Result<()> {
         restart_minute,
         restart_warning_frequency_secs,
         restart_warning_duration_secs,
+        backup_cron = backup_cron_raw.as_deref().unwrap_or("(disabled)"),
         tz = %effective_tz.name(),
         "task schedule resolved"
     );
@@ -205,6 +224,8 @@ async fn run() -> Result<()> {
         restart_warning_frequency_secs,
         restart_warning_duration_secs,
         restart_tz: effective_tz,
+        backup_cron,
+        backup_cron_raw,
     });
 
     let runner = Arc::new(TaskRunner::new(store.clone(), env.clone()));

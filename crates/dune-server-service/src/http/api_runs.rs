@@ -101,6 +101,10 @@ pub struct ConfigResponse {
     pub restart_warning_duration_secs: u64,
     pub update_lead_secs: i64,
     pub restart_tz: String,
+    /// `None` means scheduled backups are disabled — manual triggers still
+    /// work. When set, it is the exact 5-field cron string the operator typed,
+    /// evaluated in `restart_tz`.
+    pub backup_cron: Option<String>,
     /// True if any saved override differs from the active TaskEnv values —
     /// signals to the UI that a service restart is needed to pick them up.
     pub restart_required: bool,
@@ -125,6 +129,11 @@ pub async fn get_config(State(state): State<AppState>) -> Result<impl IntoRespon
         .get_config_i64("restart_warning_duration_secs")?
         .map(|v| v as u64);
     let stored_lead = state.store.get_config_i64("update_lead_secs")?;
+    let stored_backup_cron = state
+        .store
+        .get_config("backup_cron")?
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
 
     let stored_tz = state.store.get_config("restart_tz")?;
 
@@ -141,6 +150,7 @@ pub async fn get_config(State(state): State<AppState>) -> Result<impl IntoRespon
         || stored_lead
             .map(|v| v != env.update_lead_secs)
             .unwrap_or(false)
+        || stored_backup_cron.as_deref() != env.backup_cron_raw.as_deref()
         || stored_tz
             .as_deref()
             .map(|v| v != env.restart_tz.name())
@@ -153,6 +163,7 @@ pub async fn get_config(State(state): State<AppState>) -> Result<impl IntoRespon
         restart_warning_duration_secs: env.restart_warning_duration_secs,
         update_lead_secs: env.update_lead_secs,
         restart_tz: env.restart_tz.name().to_string(),
+        backup_cron: env.backup_cron_raw.clone(),
         restart_required,
     }))
 }
@@ -166,6 +177,9 @@ pub struct ConfigUpdate {
     pub restart_warning_duration_secs: Option<u64>,
     pub update_lead_secs: Option<i64>,
     pub restart_tz: Option<String>,
+    /// Empty string clears the cron schedule (= disabled); non-empty strings
+    /// are validated by `parse_cron` before being persisted.
+    pub backup_cron: Option<String>,
 }
 
 pub async fn set_config(
@@ -218,12 +232,256 @@ pub async fn set_config(
         }
         state.store.set_config("restart_tz", tz)?;
     }
+    if let Some(expr) = req.backup_cron.as_deref() {
+        let trimmed = expr.trim();
+        if trimmed.is_empty() {
+            // Empty -> clear the row so the service treats backups as disabled.
+            state.store.set_config("backup_cron", "")?;
+        } else {
+            crate::scheduler::schedule::parse_cron(trimmed)
+                .map_err(|err| ApiError::bad_request(err.to_string()))?;
+            state.store.set_config("backup_cron", trimmed)?;
+        }
+    }
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CronPreviewQuery {
+    pub expr: String,
+    /// Number of upcoming fire times to return. Capped at 20.
+    pub count: Option<u32>,
+}
+
+/// Validates a cron expression and returns the next few upcoming fire times
+/// (in the service's configured `restart_tz`) so the operator gets a sanity
+/// check while typing it. Returns `{ok: false, error}` on parse failure.
+pub async fn cron_preview(
+    State(state): State<AppState>,
+    Query(q): Query<CronPreviewQuery>,
+) -> impl IntoResponse {
+    let count = q.count.unwrap_or(5).clamp(1, 20) as usize;
+    match crate::scheduler::schedule::parse_cron(&q.expr) {
+        Ok(schedule) => {
+            let tz = state.env.restart_tz;
+            // Pre-format in the operator's tz so the UI doesn't have to
+            // figure out timezone conversion. RFC3339 with the tz offset gets
+            // accidentally rendered as UTC by `Date.toISOString()` callers.
+            let next: Vec<String> = schedule
+                .upcoming(tz)
+                .take(count)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S %Z").to_string())
+                .collect();
+            Json(serde_json::json!({
+                "ok": true,
+                "tz": tz.name(),
+                "next": next,
+            }))
+        }
+        Err(err) => Json(serde_json::json!({
+            "ok": false,
+            "error": err.to_string(),
+        })),
+    }
 }
 
 pub async fn list_timezones() -> impl IntoResponse {
     let names: Vec<&'static str> = chrono_tz::TZ_VARIANTS.iter().map(|tz| tz.name()).collect();
     Json(names)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DumpPruneItem {
+    pub namespace: String,
+    pub name: String,
+    pub action: String,
+    pub backup: Option<String>,
+    pub phase: String,
+    pub created_at: String,
+    pub age_days: i64,
+}
+
+/// Phase values the prune endpoint considers eligible for deletion. We
+/// allow Succeeded (the artifact, if any, is already on disk; the CR is
+/// just bookkeeping) and Failed (no artifact produced; pure cluster
+/// clutter). In-progress / Pending / unknown phases are kept so we never
+/// race the operator.
+fn is_prunable_phase(phase: &str) -> bool {
+    matches!(phase, "Succeeded" | "Failed")
+}
+
+/// Actions the prune endpoint considers eligible. Both `dump` and `import`
+/// CRs are pure historical records once they reach a terminal phase —
+/// deleting them does not undo the database state they produced. Unknown
+/// action strings are excluded by default so future Funcom additions don't
+/// get reaped accidentally.
+fn is_prunable_action(action: &str) -> bool {
+    matches!(action, "dump" | "import")
+}
+
+/// Lists `DatabaseOperation` CRs across all namespaces that are safe to
+/// delete: `status.phase` is terminal (Succeeded/Failed) AND `spec.action`
+/// is one of the known actions (dump/import). The on-disk `.backup` files
+/// are not affected by deleting the CR.
+async fn list_prunable_dumps(state: &AppState) -> Result<Vec<DumpPruneItem>, ApiError> {
+    let result = state
+        .env
+        .kubectl
+        .run(&["get", "databaseoperations", "-A", "-o", "json"])
+        .await
+        .map_err(|err| ApiError::internal(format!("listing database operations: {err}")))?;
+    if !result.ok() {
+        return Err(ApiError::internal(format!(
+            "kubectl get databaseoperations exited {}: {}",
+            result.exit_code,
+            result.stderr.trim()
+        )));
+    }
+    let value: serde_json::Value = serde_json::from_str(&result.stdout)
+        .map_err(|err| ApiError::internal(format!("parsing operations json: {err}")))?;
+    let items = value
+        .get("items")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let now = chrono::Utc::now();
+    let mut out = Vec::new();
+    for item in items {
+        let phase = item["status"]["phase"].as_str().unwrap_or_default();
+        let action = item["spec"]["action"].as_str().unwrap_or_default();
+        if !is_prunable_action(action) || !is_prunable_phase(phase) {
+            continue;
+        }
+        let namespace = item["metadata"]["namespace"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let name = item["metadata"]["name"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        if namespace.is_empty() || name.is_empty() {
+            continue;
+        }
+        let backup = item["spec"]["backup"].as_str().map(|s| s.to_string());
+        let created_at_raw = item["metadata"]["creationTimestamp"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let age_days = chrono::DateTime::parse_from_rfc3339(&created_at_raw)
+            .map(|dt| (now - dt.with_timezone(&chrono::Utc)).num_days())
+            .unwrap_or(0);
+        out.push(DumpPruneItem {
+            namespace,
+            name,
+            action: action.to_string(),
+            backup,
+            phase: phase.to_string(),
+            created_at: created_at_raw,
+            age_days,
+        });
+    }
+    out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(out)
+}
+
+pub async fn dump_prune_preview(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, ApiError> {
+    let items = list_prunable_dumps(&state).await?;
+    Ok(Json(items))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DumpPruneTarget {
+    pub namespace: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DumpPruneRequest {
+    pub items: Vec<DumpPruneTarget>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DumpPruneSkip {
+    pub namespace: String,
+    pub name: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DumpPruneResult {
+    pub deleted: Vec<String>,
+    pub skipped: Vec<DumpPruneSkip>,
+}
+
+/// Deletes the requested DatabaseOperation CRs after re-validating each one
+/// against the same Succeeded+dump filter — never trust the client. The
+/// Funcom operator garbage-collects the owned pod via ownerReferences once
+/// the operation CR is gone. The `.backup` files on disk are NOT touched.
+pub async fn dump_prune_execute(
+    State(state): State<AppState>,
+    Json(req): Json<DumpPruneRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let current = list_prunable_dumps(&state).await?;
+    let mut deleted = Vec::new();
+    let mut skipped = Vec::new();
+    for target in req.items {
+        let eligible = current
+            .iter()
+            .any(|item| item.namespace == target.namespace && item.name == target.name);
+        if !eligible {
+            skipped.push(DumpPruneSkip {
+                namespace: target.namespace,
+                name: target.name,
+                reason: "no longer eligible (not a Succeeded dump, or already removed)".to_string(),
+            });
+            continue;
+        }
+        let result = state
+            .env
+            .kubectl
+            .run(&[
+                "delete",
+                "databaseoperation",
+                &target.name,
+                "-n",
+                &target.namespace,
+                "--ignore-not-found",
+            ])
+            .await;
+        match result {
+            Ok(r) if r.ok() => {
+                tracing::info!(
+                    namespace = %target.namespace,
+                    name = %target.name,
+                    "deleted DatabaseOperation"
+                );
+                deleted.push(format!("{}/{}", target.namespace, target.name));
+            }
+            Ok(r) => skipped.push(DumpPruneSkip {
+                namespace: target.namespace.clone(),
+                name: target.name.clone(),
+                reason: format!(
+                    "kubectl exit {}: {}",
+                    r.exit_code,
+                    r.stderr.trim()
+                ),
+            }),
+            Err(err) => skipped.push(DumpPruneSkip {
+                namespace: target.namespace.clone(),
+                name: target.name.clone(),
+                reason: format!("kubectl error: {err}"),
+            }),
+        }
+    }
+    Ok(Json(DumpPruneResult { deleted, skipped }))
 }
 
 #[derive(Debug)]

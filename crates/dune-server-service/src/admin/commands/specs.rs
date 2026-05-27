@@ -29,6 +29,21 @@ const BROADCAST_TYPES: &[SelectOption] = &[
     },
 ];
 
+const SHUTDOWN_TYPES: &[SelectOption] = &[
+    SelectOption {
+        value: "Restart",
+        label: "Restart",
+    },
+    SelectOption {
+        value: "Maintenance",
+        label: "Maintenance",
+    },
+    SelectOption {
+        value: "Update",
+        label: "Update",
+    },
+];
+
 const ADD_ITEM_FIELDS: &[FieldSpec] = &[
     FIELD_PLAYER,
     FieldSpec {
@@ -90,11 +105,47 @@ const SERVICE_BROADCAST_FIELDS: &[FieldSpec] = &[
     },
     FieldSpec {
         key: "BroadcastDuration",
-        label: "Duration (s)",
+        label: "Display duration (in seconds)",
         kind: FieldKind::Int,
         required: None,
         default: Some(json_const_i(30)),
-        helper: None,
+        helper: Some("How long each broadcast pulse stays on-screen"),
+        options: None,
+    },
+    FieldSpec {
+        key: "ShutdownType",
+        label: "Shutdown type",
+        kind: FieldKind::Select,
+        required: None,
+        default: Some(json_const_s("Restart")),
+        helper: Some("ServerShutdown only"),
+        options: Some(SHUTDOWN_TYPES),
+    },
+    FieldSpec {
+        key: "ShutdownDuration",
+        label: "Lead time (in seconds)",
+        kind: FieldKind::Int,
+        required: None,
+        default: Some(json_const_i(600)),
+        helper: Some("ServerShutdown only - seconds until the shutdown fires"),
+        options: None,
+    },
+    FieldSpec {
+        key: "BroadcastFrequency",
+        label: "Repeat frequency (in seconds)",
+        kind: FieldKind::Int,
+        required: None,
+        default: Some(json_const_i(60)),
+        helper: Some("ServerShutdown only - how often the countdown re-broadcasts"),
+        options: None,
+    },
+    FieldSpec {
+        key: "ShouldCancel",
+        label: "Cancel pending shutdown",
+        kind: FieldKind::Bool,
+        required: None,
+        default: Some(json_const_b(false)),
+        helper: Some("ServerShutdown only - cancels an in-flight countdown; ignores other fields"),
         options: None,
     },
 ];
@@ -401,5 +452,9 @@ const fn json_const_f(n: f64) -> serde_json::Value {
 }
 const fn json_const_s(s: &'static str) -> serde_json::Value {
     let _ = s;
+    serde_json::Value::Null
+}
+const fn json_const_b(b: bool) -> serde_json::Value {
+    let _ = b;
     serde_json::Value::Null
 }

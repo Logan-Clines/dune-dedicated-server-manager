@@ -4,6 +4,7 @@ import {
   Badge,
   Box,
   Button,
+  Checkbox,
   Flex,
   Select,
   Table,
@@ -267,7 +268,7 @@ export default function AdminTab({ tunnelId, prefill, onPrefillConsumed }: Admin
               {selected.describe}
             </Text>
             <Flex direction="column" gap="3" mt="3">
-              {selected.fields.map((field) => (
+              {visibleFields(selected, values).map((field) => (
                 <FieldInput
                   key={field.key}
                   field={field}
@@ -566,6 +567,38 @@ function TemplateCombobox({
   );
 }
 
+/// Filters the spec's field list down to what's relevant for the current
+/// values. Today only ServiceBroadcast has conditional fields — Generic
+/// hides the shutdown-specific knobs, ServerShutdown hides Generic-only
+/// fields, and a `ShouldCancel=true` hides everything except the cancel
+/// toggle itself.
+function visibleFields(
+  spec: CommandSpec,
+  values: Record<string, unknown>,
+): FieldSpec[] {
+  if (spec.id !== "ServiceBroadcast") return [...spec.fields];
+  const broadcastType = (values.BroadcastType as string) || "Generic";
+  const shouldCancel = values.ShouldCancel === true;
+  const GENERIC_ONLY = new Set(["Title", "Body"]);
+  const SHUTDOWN_ONLY = new Set([
+    "ShutdownType",
+    "ShutdownDuration",
+    "BroadcastFrequency",
+    "ShouldCancel",
+  ]);
+  return spec.fields.filter((field) => {
+    if (field.key === "BroadcastType") return true;
+    if (broadcastType === "Generic") {
+      if (SHUTDOWN_ONLY.has(field.key)) return false;
+      return true;
+    }
+    // ServerShutdown branch
+    if (GENERIC_ONLY.has(field.key)) return false;
+    if (shouldCancel && field.key !== "ShouldCancel") return false;
+    return true;
+  });
+}
+
 function renderInput(field: FieldSpec, value: unknown, onChange: (v: unknown) => void) {
   const strValue = value === undefined || value === null ? "" : String(value);
   if (field.kind === "select" && field.options) {
@@ -584,6 +617,12 @@ function renderInput(field: FieldSpec, value: unknown, onChange: (v: unknown) =>
   }
   if (field.kind === "text") {
     return <TextArea value={strValue} onChange={(e) => onChange(e.target.value)} rows={3} />;
+  }
+  if (field.kind === "bool") {
+    const checked = value === true || strValue === "true" || strValue === "1";
+    return (
+      <Checkbox checked={checked} onCheckedChange={(c) => onChange(Boolean(c))} />
+    );
   }
   return (
     <TextField.Root

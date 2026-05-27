@@ -118,10 +118,20 @@ impl Task for RestartNoticeTask {
             ))?;
         }
 
+        // The shared service-broadcast base payload accepts BroadcastDuration
+        // for the on-screen pulse length. Match the manual Admin form's
+        // default so scheduled + manual paths produce the same shape.
+        let broadcast_duration = 30u64;
         let result = ctx
             .env
             .mq
-            .publish_server_shutdown(ShutdownType::Restart, target_ts, frequency, duration)
+            .publish_server_shutdown(
+                ShutdownType::Restart,
+                target_ts,
+                frequency,
+                duration,
+                broadcast_duration,
+            )
             .await?;
         ctx.log_info(&format!(
             "publish ok={} output={}",

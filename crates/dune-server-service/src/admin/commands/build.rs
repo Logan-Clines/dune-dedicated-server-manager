@@ -62,6 +62,9 @@ pub fn validate_and_build(
         {
             return Err(ValidationError::BroadcastNeedsTitleAndBody);
         }
+        // ServerShutdown fields are auto-defaulted; nothing else to validate
+        // beyond what the parser docs say. ShouldCancel handling is in
+        // build_service_broadcast.
     }
 
     Ok(build(spec, &normalized))
@@ -98,10 +101,52 @@ fn build_service_broadcast(values: &Map<String, Value>) -> Value {
         .and_then(|v| v.as_str())
         .unwrap_or("Generic");
     if bt == "ServerShutdown" {
+        let should_cancel = values
+            .get("ShouldCancel")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if should_cancel {
+            // Per server-commands-broadcast.md: ShouldCancel short-circuits
+            // the parser; no other shutdown metadata required.
+            return json!({
+                "ServerCommand": "ServiceBroadcast",
+                "BroadcastType": "ServerShutdown",
+                "BroadcastPayload": { "ShouldCancel": true },
+            });
+        }
+        // Required by the parser for non-cancel shutdowns. Defaults match the
+        // spec's `default_for` entries; we keep them belt-and-braces here.
+        let shutdown_type = values
+            .get("ShutdownType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Restart");
+        let lead_secs = values
+            .get("ShutdownDuration")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(600)
+            .max(1);
+        let frequency = values
+            .get("BroadcastFrequency")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(60)
+            .max(1);
+        let broadcast_duration = values
+            .get("BroadcastDuration")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(30)
+            .max(1);
+        let now = chrono::Utc::now().timestamp();
         return json!({
             "ServerCommand": "ServiceBroadcast",
             "BroadcastType": "ServerShutdown",
-            "BroadcastPayload": {},
+            "BroadcastPayload": {
+                "ShutdownType": shutdown_type,
+                "DateTimestamp": now,
+                "ShutdownDuration": lead_secs,
+                "ShutdownTimestamp": now + lead_secs,
+                "BroadcastFrequency": frequency,
+                "BroadcastDuration": broadcast_duration,
+            },
         });
     }
     let title = values
@@ -144,6 +189,10 @@ fn default_for(field: &FieldSpec) -> Option<Value> {
         "Category" => Some(json!("Combat")),
         "BroadcastType" => Some(json!("Generic")),
         "BroadcastDuration" => Some(json!(30)),
+        "ShutdownType" => Some(json!("Restart")),
+        "ShutdownDuration" => Some(json!(600)),
+        "BroadcastFrequency" => Some(json!(60)),
+        "ShouldCancel" => Some(json!(false)),
         // TemplateName default removed — the frontend auto-picks the first
         // valid template per the selected vehicle's available list.
         "Persistent" => Some(json!(1.0)),
@@ -258,11 +307,52 @@ mod tests {
     }
 
     #[test]
-    fn service_broadcast_server_shutdown_uses_empty_payload() {
+    fn service_broadcast_server_shutdown_populates_countdown_payload() {
         let raw = into_map(json!({"BroadcastType": "ServerShutdown"}));
         let inner = validate_and_build("ServiceBroadcast", &raw).unwrap();
         assert_eq!(inner["BroadcastType"], "ServerShutdown");
-        assert_eq!(inner["BroadcastPayload"], json!({}));
+        let payload = &inner["BroadcastPayload"];
+        // Defaults applied
+        assert_eq!(payload["ShutdownType"], "Restart");
+        assert_eq!(payload["ShutdownDuration"], 600);
+        assert_eq!(payload["BroadcastFrequency"], 60);
+        assert_eq!(payload["BroadcastDuration"], 30);
+        // ShutdownTimestamp = DateTimestamp + ShutdownDuration
+        let ts = payload["ShutdownTimestamp"].as_i64().unwrap();
+        let date_ts = payload["DateTimestamp"].as_i64().unwrap();
+        assert_eq!(ts - date_ts, 600);
+    }
+
+    #[test]
+    fn service_broadcast_server_shutdown_honors_overrides() {
+        let raw = into_map(json!({
+            "BroadcastType": "ServerShutdown",
+            "ShutdownType": "Maintenance",
+            "ShutdownDuration": 900,
+            "BroadcastFrequency": 30,
+            "BroadcastDuration": 15,
+        }));
+        let inner = validate_and_build("ServiceBroadcast", &raw).unwrap();
+        let payload = &inner["BroadcastPayload"];
+        assert_eq!(payload["ShutdownType"], "Maintenance");
+        assert_eq!(payload["ShutdownDuration"], 900);
+        assert_eq!(payload["BroadcastFrequency"], 30);
+        assert_eq!(payload["BroadcastDuration"], 15);
+    }
+
+    #[test]
+    fn service_broadcast_cancel_short_circuits_payload() {
+        let raw = into_map(json!({
+            "BroadcastType": "ServerShutdown",
+            "ShouldCancel": true,
+            // Other fields should be ignored when cancelling.
+            "ShutdownDuration": 999,
+        }));
+        let inner = validate_and_build("ServiceBroadcast", &raw).unwrap();
+        let payload = &inner["BroadcastPayload"];
+        assert_eq!(payload["ShouldCancel"], true);
+        assert!(payload.get("ShutdownType").is_none());
+        assert!(payload.get("ShutdownTimestamp").is_none());
     }
 
     #[test]

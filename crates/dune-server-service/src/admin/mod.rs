@@ -9,6 +9,6 @@ pub use data::{
     search_xp_event_tags, Item, JourneyNode, SkillModule, Vehicle, XpEventTag,
 };
 pub use mq::{
-    publish_inner, publish_server_shutdown, publish_service_broadcast, MqPublisher, PublishResult,
-    ShutdownType,
+    publish_inner, publish_server_shutdown, publish_server_shutdown_cancel,
+    publish_service_broadcast, MqPublisher, PublishResult, ShutdownType,
 };

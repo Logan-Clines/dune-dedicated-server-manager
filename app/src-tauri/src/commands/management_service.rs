@@ -212,6 +212,36 @@ fn install_inner(
         .map_err(|err| step_err(app, "stop-old", err))?;
     emit_progress(app, "stop-old", "ok", None);
 
+    emit_progress(app, "prepare-host", "running", None);
+    // Pre-create every directory the systemd unit lists under
+    // `ReadWritePaths=`. systemd sets up a mount namespace BEFORE the binary
+    // runs, and a missing path there is fatal (exit 226/NAMESPACE — see the
+    // "/root/.steam: No such file or directory" failure mode). The service's
+    // sqlite + OpenRC supervisor also need the state dir and log file owned
+    // by the service user up front; missing them produces the silent
+    // not-starting symptom (goofycoolguy / MadBuffoon / issues #5, #6).
+    let prepare_script = format!(
+        "set -eu\n\
+         export PATH=/sbin:/usr/sbin:/usr/local/sbin:$PATH\n\
+         sudo install -d -m 0755 -o {user} -g {group} {home}/.dune\n\
+         sudo install -d -m 0700 -o {user} -g {group} {state_dir}\n\
+         sudo install -d -m 0755 -o {user} -g {group} {home}/.local\n\
+         sudo install -d -m 0755 -o {user} -g {group} {home}/.local/bin\n\
+         sudo install -d -m 0755 -o {user} -g {group} {home}/.steam\n\
+         sudo install -d -m 0755 -o {user} -g {group} {home}/Steam\n\
+         sudo touch /var/log/dune-server-service.log\n\
+         sudo chown {user}:{group} /var/log/dune-server-service.log\n\
+         sudo chmod 0644 /var/log/dune-server-service.log\n",
+        user = sh_single_quoted(&account.user),
+        group = sh_single_quoted(&account.group),
+        home = sh_single_quoted(&account.home),
+        state_dir = sh_single_quoted(&format!("{}/.dune/state", account.home)),
+    );
+    runner
+        .run_script(&prepare_script)
+        .map_err(|err| step_err(app, "prepare-host", err))?;
+    emit_progress(app, "prepare-host", "ok", None);
+
     let binary_bytes = std::fs::read(binary_path)
         .map_err(|err| format!("reading resource {}: {err}", binary_path.display()))?;
     let binary_size = std::fs::metadata(binary_path)
@@ -346,16 +376,29 @@ fn install_inner(
     emit_progress(app, "start-service", "ok", None);
 
     emit_progress(app, "verify", "running", None);
+    // `STATE=...` line carries the canonical systemctl/openrc state. When the
+    // unit is anything other than active we also tail the journal so the UI
+    // surfaces *why* — empty parentheses helped nobody.
     let verify_script = "set +e\n\
          export PATH=/sbin:/usr/sbin:/usr/local/sbin:$PATH\n\
          if command -v systemctl >/dev/null 2>&1; then\n  \
              sleep 1\n  \
-             sudo systemctl is-active dune-server-service.service\n\
+             state=$(sudo systemctl is-active dune-server-service.service 2>/dev/null | tr -d '\\r\\n')\n  \
+             [ -z \"$state\" ] && state=unknown\n  \
+             echo \"STATE=$state\"\n  \
+             if [ \"$state\" != active ]; then\n    \
+                 echo '--- journalctl ---'\n    \
+                 sudo journalctl -u dune-server-service.service -n 20 --no-pager 2>&1 | tail -n 20\n  \
+             fi\n\
          elif command -v rc-service >/dev/null 2>&1; then\n  \
              sleep 1\n  \
-             sudo rc-service dune-server-service status >/dev/null 2>&1 && echo active || echo inactive\n\
+             if sudo rc-service dune-server-service status >/dev/null 2>&1; then echo STATE=active; else echo STATE=inactive; fi\n  \
+             if [ -f /var/log/dune-server-service.log ]; then\n    \
+                 echo '--- supervisor log ---'\n    \
+                 sudo tail -n 20 /var/log/dune-server-service.log 2>&1\n  \
+             fi\n\
          else\n  \
-             echo inactive\n\
+             echo STATE=unknown\n\
          fi\n\
          /opt/dune-server-service/dune-server-service --version 2>/dev/null || true\n\
          exit 0\n";
@@ -364,23 +407,47 @@ fn install_inner(
         .map_err(|err| step_err(app, "verify", err))?;
     let mut active_state = String::new();
     let mut installed_version: Option<String> = None;
+    let mut diagnostic_lines: Vec<String> = Vec::new();
+    let mut collecting_diag = false;
     for line in verify_stdout.lines() {
         let trimmed = line.trim();
-        match trimmed {
-            "active" | "inactive" => active_state = trimmed.to_string(),
-            other if other.starts_with("dune-server-service ") => {
-                installed_version = other
-                    .strip_prefix("dune-server-service ")
-                    .map(|s| s.trim().to_string());
-            }
-            _ => {}
+        if let Some(state) = trimmed.strip_prefix("STATE=") {
+            active_state = state.to_string();
+            continue;
+        }
+        if trimmed.starts_with("--- ") && trimmed.ends_with(" ---") {
+            collecting_diag = true;
+            continue;
+        }
+        if trimmed.starts_with("dune-server-service ") {
+            installed_version = trimmed
+                .strip_prefix("dune-server-service ")
+                .map(|s| s.trim().to_string());
+            continue;
+        }
+        if collecting_diag && !trimmed.is_empty() {
+            diagnostic_lines.push(trimmed.to_string());
         }
     }
     let started = active_state == "active";
     let verify_msg = match (started, &installed_version) {
         (true, Some(v)) => Some(format!("active, version {v}")),
         (true, None) => Some("active".to_string()),
-        (false, _) => Some(format!("not active ({active_state})")),
+        (false, _) => {
+            let header = if active_state.is_empty() {
+                "not active".to_string()
+            } else {
+                format!("not active ({active_state})")
+            };
+            if diagnostic_lines.is_empty() {
+                Some(header)
+            } else {
+                // Keep the tail short so the toast/log stays readable; full
+                // detail is still on the host via `journalctl -u ...`.
+                let tail: Vec<String> = diagnostic_lines.iter().rev().take(6).rev().cloned().collect();
+                Some(format!("{header}\n{}", tail.join("\n")))
+            }
+        }
     };
     emit_progress(
         app,
@@ -400,24 +467,24 @@ fn install_inner(
 
 fn discover_service_account(
     runner: &RusshRunner,
-    registered_user: &str,
+    _registered_user: &str,
 ) -> Result<ServiceAccount, String> {
-    let user = registered_user.trim();
-    if user.is_empty() {
-        return Err("registered SSH user is required".to_string());
-    }
-    let script = format!(
-        "set -eu\n\
-         user={user}\n\
-         home=$(getent passwd \"$user\" | awk -F: '{{print $6}}')\n\
-         group=$(id -gn \"$user\")\n\
-         if [ -z \"$home\" ] || [ -z \"$group\" ]; then\n  \
-             echo \"could not resolve service account for $user\" >&2\n  \
+    // The Dune service ALWAYS runs as the vendor's `dune` user with home
+    // `/home/dune`, no matter which account the operator SSH'd in as. SSH
+    // login may be root / ubuntu / a custom sudoer; install steps escalate
+    // via `sudo install -o dune -g dune` and the systemd/openrc unit pins
+    // User=dune. We still call getent on the host to fail loudly if `dune`
+    // isn't provisioned yet (e.g. vendor setup wasn't run).
+    let script = "set -eu\n\
+         user=dune\n\
+         home=$(getent passwd \"$user\" | awk -F: '{print $6}')\n\
+         group=$(id -gn \"$user\" 2>/dev/null || echo dune)\n\
+         if [ -z \"$home\" ]; then\n  \
+             echo \"dune user not found on host — run the vendor setup first\" >&2\n  \
              exit 1\n\
          fi\n\
-         printf 'USER=%s\\nGROUP=%s\\nHOME=%s\\n' \"$user\" \"$group\" \"$home\"\n",
-        user = sh_single_quoted(user),
-    );
+         printf 'USER=%s\\nGROUP=%s\\nHOME=%s\\n' \"$user\" \"$group\" \"$home\"\n";
+    let script = script.to_string();
     let stdout = runner.run_script(&script).map_err(command_error_message)?;
     let mut account = ServiceAccount {
         user: String::new(),

@@ -38,6 +38,7 @@ export type InstallProgressEvent = {
 
 export const INSTALL_STEPS: ReadonlyArray<{ id: string; label: string }> = [
   { id: "stop-old", label: "Stop existing service" },
+  { id: "prepare-host", label: "Prepare host directories" },
   { id: "upload-binary", label: "Upload binary" },
   { id: "write-token", label: "Write command-auth token" },
   { id: "install-init", label: "Install init unit" },
@@ -149,6 +150,8 @@ export type ScheduleConfig = {
   restartWarningDurationSecs: number;
   updateLeadSecs: number;
   restartTz: string;
+  /** null = scheduled backups disabled; otherwise the 5-field cron string. */
+  backupCron: string | null;
   restartRequired: boolean;
 };
 
@@ -159,7 +162,33 @@ export type ScheduleConfigUpdate = Partial<{
   restartWarningDurationSecs: number;
   updateLeadSecs: number;
   restartTz: string;
+  /** Empty string clears the cron (disables); non-empty validated server-side. */
+  backupCron: string;
 }>;
+
+export type CronPreviewResult =
+  | { ok: true; tz: string; next: string[] }
+  | { ok: false; error: string };
+
+export type DumpPruneItem = {
+  namespace: string;
+  name: string;
+  action: string;
+  backup: string | null;
+  phase: string;
+  createdAt: string;
+  ageDays: number;
+};
+
+export type DumpPruneTarget = {
+  namespace: string;
+  name: string;
+};
+
+export type DumpPruneResult = {
+  deleted: string[];
+  skipped: { namespace: string; name: string; reason: string }[];
+};
 
 export type PlayerLocationDto = {
   x: number;

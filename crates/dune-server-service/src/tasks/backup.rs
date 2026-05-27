@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -5,12 +7,21 @@ use chrono::Utc;
 use crate::kubectl::battlegroup as bg;
 use crate::kubectl::run_process;
 use crate::scheduler::{Schedule, Task, TaskCtx, TaskOutcome};
+use crate::tasks::TaskEnv;
 
 /// Replaces `scripts/cron-battlegroup-backup`. Runs the vendor backup helper,
 /// emits a per-run log line referencing the dump path, and lets the operator
 /// handle stale dump cleanup out-of-band (we do not invoke `sudo find -delete`
 /// from the daemon — too easy to widen the blast radius).
-pub struct BackupTask;
+pub struct BackupTask {
+    env: Arc<TaskEnv>,
+}
+
+impl BackupTask {
+    pub fn new(env: Arc<TaskEnv>) -> Self {
+        Self { env }
+    }
+}
 
 #[async_trait]
 impl Task for BackupTask {
@@ -19,7 +30,13 @@ impl Task for BackupTask {
     }
 
     fn schedule(&self) -> Schedule {
-        Schedule::interval_secs(2 * 60 * 60)
+        // None -> Schedule::Disabled (operator opt-in). Vendor backups block
+        // server I/O for the whole dump, so default-off is the right call;
+        // see seb851's report of in-play perf hits with the old 2h default.
+        match self.env.backup_cron.as_ref() {
+            Some(schedule) => Schedule::Cron(Box::new(schedule.clone())),
+            None => Schedule::Disabled,
+        }
     }
 
     async fn run(&self, ctx: &TaskCtx) -> Result<TaskOutcome> {

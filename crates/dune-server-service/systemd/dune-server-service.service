@@ -15,7 +15,7 @@ RestartSec=10
 User=dune
 Group=dune
 
-ReadWritePaths=/home/dune/.dune /home/dune/.local /home/dune/.steam /home/dune/Steam /tmp /funcom/artifacts/database-dumps
+ReadWritePaths=/home/dune/.dune /home/dune/.local /home/dune/.steam /home/dune/Steam /tmp -/funcom/artifacts/database-dumps
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only

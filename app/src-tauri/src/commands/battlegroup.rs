@@ -15,7 +15,13 @@ type Manager = BattlegroupManagementOrchestrator<
 
 fn manager_from_runner(runner: &RusshRunner) -> Manager {
     let kubernetes = StructuredKubectl::new(runner.clone());
-    let wrapper = VendorBattlegroupWrapper::new(runner.clone());
+    // Pass the actual SSH login user so the wrapper knows when to insert
+    // `sudo -n -u dune -H bash -lc ...`. Defaulting to "dune" here was a
+    // silent root-style fallback: when the operator registered the server
+    // under e.g. `ubuntu`, the wrapper skipped impersonation and the script
+    // tried to read/write /home/dune as ubuntu, which fails noisily.
+    let ssh_user = runner.target().user.clone();
+    let wrapper = VendorBattlegroupWrapper::with_ssh_user(runner.clone(), ssh_user);
     BattlegroupManagementOrchestrator::new(kubernetes, wrapper)
 }
 

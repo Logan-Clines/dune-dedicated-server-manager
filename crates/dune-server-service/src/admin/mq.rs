@@ -79,6 +79,7 @@ impl MqPublisher {
         shutdown_timestamp: i64,
         frequency_secs: u64,
         duration_secs: u64,
+        broadcast_duration_secs: u64,
     ) -> Result<PublishResult> {
         publish_server_shutdown(
             self,
@@ -86,8 +87,13 @@ impl MqPublisher {
             shutdown_timestamp,
             frequency_secs,
             duration_secs,
+            broadcast_duration_secs,
         )
         .await
+    }
+
+    pub async fn publish_server_shutdown_cancel(&self) -> Result<PublishResult> {
+        publish_server_shutdown_cancel(self).await
     }
 }
 
@@ -209,6 +215,7 @@ pub async fn publish_server_shutdown(
     shutdown_timestamp: i64,
     frequency_secs: u64,
     duration_secs: u64,
+    broadcast_duration_secs: u64,
 ) -> Result<PublishResult> {
     let inner = json!({
         "ServerCommand": "ServiceBroadcast",
@@ -219,9 +226,21 @@ pub async fn publish_server_shutdown(
             "ShutdownDuration": duration_secs,
             "ShutdownTimestamp": shutdown_timestamp,
             "BroadcastFrequency": frequency_secs,
+            "BroadcastDuration": broadcast_duration_secs,
         }
     });
     publish_inner(publisher, &inner, "server-shutdown").await
+}
+
+/// Cancels an in-flight ServerShutdown countdown. The parser short-circuits
+/// on `ShouldCancel: true` so no other shutdown metadata is sent.
+pub async fn publish_server_shutdown_cancel(publisher: &MqPublisher) -> Result<PublishResult> {
+    let inner = json!({
+        "ServerCommand": "ServiceBroadcast",
+        "BroadcastType": "ServerShutdown",
+        "BroadcastPayload": { "ShouldCancel": true },
+    });
+    publish_inner(publisher, &inner, "server-shutdown-cancel").await
 }
 
 #[cfg(test)]

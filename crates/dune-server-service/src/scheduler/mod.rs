@@ -59,6 +59,11 @@ impl Scheduler {
                 "scheduling task"
             );
 
+            if task.schedule().is_disabled() {
+                // No tick loop. Manual triggers still resolve via build_all().
+                continue;
+            }
+
             let handle = tokio::spawn(async move {
                 loop {
                     let next = task.schedule().next_fire(tz, Utc::now());
