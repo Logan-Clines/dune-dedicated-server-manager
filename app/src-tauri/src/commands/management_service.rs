@@ -297,11 +297,21 @@ fn install_inner(
         emit_progress(app, "write-token", "running", None);
         let token_b64 = base64::engine::general_purpose::STANDARD.encode(t.as_bytes());
         let token_path = format!("{}/.dune/state/command-auth-token", account.home);
+        // Stage to a real temp file before `sudo install` instead of piping
+        // through `sudo install /dev/stdin ...`. On Ubuntu hosts with sudo
+        // `Defaults use_pty` (default on 24.04+), root-to-root sudo allocates
+        // a pty and the piped bytes never reach the child's fd 0, which
+        // surfaces as `install: No such file or directory` even though both
+        // /dev/stdin and the destination dir exist. The temp-file pattern
+        // sidesteps the pty entirely.
         let token_script = format!(
             "set -eu\n\
              export PATH=/sbin:/usr/sbin:/usr/local/sbin:$PATH\n\
              sudo install -d -m 0700 -o {user} -g {group} {state_dir}\n\
-             echo {b64} | base64 -d | sudo install -m 0600 -o {user} -g {group} /dev/stdin {dest}\n",
+             tmp=$(mktemp /tmp/dune-token.XXXXXX)\n\
+             trap 'rm -f \"$tmp\"' EXIT\n\
+             echo {b64} | base64 -d > \"$tmp\"\n\
+             sudo install -m 0600 -o {user} -g {group} \"$tmp\" {dest}\n",
             user = sh_single_quoted(&account.user),
             group = sh_single_quoted(&account.group),
             state_dir = sh_single_quoted(&format!("{}/.dune/state", account.home)),
@@ -326,19 +336,33 @@ fn install_inner(
         .encode(render_systemd_unit(unit_path, &account)?.as_bytes());
     let openrc_b64 = base64::engine::general_purpose::STANDARD
         .encode(render_openrc_unit(openrc_path, &account)?.as_bytes());
+    // Stage unit content + drop-in to real temp files before `sudo install`.
+    // The previous `echo b64 | base64 -d | sudo install /dev/stdin ...` shape
+    // breaks on hosts where sudoers has `Defaults use_pty` enabled (default
+    // on Ubuntu 24.04+): root-to-root sudo allocates a pty and the piped
+    // bytes never reach the child's fd 0, surfacing as
+    // `install: No such file or directory`. mktemp + sudo install <tmp>
+    // sidesteps the pty entirely.
     let init_script = format!(
         "set -eu\n\
          export PATH=/sbin:/usr/sbin:/usr/local/sbin:$PATH\n\
+         tmp_unit=$(mktemp /tmp/dune-unit.XXXXXX)\n\
+         tmp_dropin=$(mktemp /tmp/dune-dropin.XXXXXX)\n\
+         tmp_openrc=$(mktemp /tmp/dune-openrc.XXXXXX)\n\
+         trap 'rm -f \"$tmp_unit\" \"$tmp_dropin\" \"$tmp_openrc\"' EXIT\n\
          if command -v systemctl >/dev/null 2>&1; then\n  \
              echo SYSTEMD\n  \
-             echo {unit_b64} | base64 -d | sudo install -m 0644 -o root -g root /dev/stdin {unit_dest}\n  \
+             echo {unit_b64} | base64 -d > \"$tmp_unit\"\n  \
+             sudo install -m 0644 -o root -g root \"$tmp_unit\" {unit_dest}\n  \
              sudo install -d -m 0755 /etc/systemd/system/dune-server-service.service.d\n  \
-             printf '%s\\n' '[Service]' 'NoNewPrivileges=false' 'MemoryDenyWriteExecute=false' | sudo install -m 0644 -o root -g root /dev/stdin /etc/systemd/system/dune-server-service.service.d/zz-dune-steamcmd-compat.conf\n\
-             sudo systemctl daemon-reload\n\
+             printf '%s\\n' '[Service]' 'NoNewPrivileges=false' 'MemoryDenyWriteExecute=false' > \"$tmp_dropin\"\n  \
+             sudo install -m 0644 -o root -g root \"$tmp_dropin\" /etc/systemd/system/dune-server-service.service.d/zz-dune-steamcmd-compat.conf\n  \
+             sudo systemctl daemon-reload\n  \
              sudo systemctl reset-failed dune-server-service.service >/dev/null 2>&1 || true\n\
          elif command -v rc-service >/dev/null 2>&1; then\n  \
              echo OPENRC\n  \
-             echo {openrc_b64} | base64 -d | sudo install -m 0755 -o root -g root /dev/stdin {openrc_dest}\n  \
+             echo {openrc_b64} | base64 -d > \"$tmp_openrc\"\n  \
+             sudo install -m 0755 -o root -g root \"$tmp_openrc\" {openrc_dest}\n  \
              sudo rc-update add dune-server-service default >/dev/null 2>&1 || true\n\
          else\n  \
              echo \"no supported init system found (need systemd or openrc)\" >&2\n  \
