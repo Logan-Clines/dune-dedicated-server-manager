@@ -284,6 +284,29 @@ const TELEPORT_FIELDS: &[FieldSpec] = &[
     },
 ];
 
+const CHEAT_SCRIPT_FIELDS: &[FieldSpec] = &[
+    FIELD_PLAYER,
+    FieldSpec {
+        key: "ScriptName",
+        label: "ScriptName",
+        kind: FieldKind::String,
+        required: Some(true),
+        default: None,
+        helper: Some("[CheatScript.<name>] section from DefaultGame.ini (e.g. PlaytestSetupAdmin, UnlockAllSkills)"),
+        options: None,
+    },
+];
+
+const SERVER_EXEC_FIELDS: &[FieldSpec] = &[FieldSpec {
+    key: "Exec",
+    label: "Exec",
+    kind: FieldKind::String,
+    required: Some(true),
+    default: None,
+    helper: Some("Raw console/exec command string"),
+    options: None,
+}];
+
 const SPAWN_VEHICLE_FIELDS: &[FieldSpec] = &[
     FIELD_PLAYER,
     FieldSpec { key: "ClassName", label: "Vehicle", kind: FieldKind::String, required: Some(true), default: None, helper: Some("DT_VehicleTemplates row key (e.g. Sandbike, Buggy)"), options: None },
@@ -429,15 +452,34 @@ pub static SPECS: &[CommandSpec] = &[
         fields: SPAWN_VEHICLE_FIELDS,
         build: BuildKind::Passthrough,
     },
+    CommandSpec {
+        id: "CheatScript",
+        label: "Cheat script (raw)",
+        category: Category::Exec,
+        destructive: None,
+        needs_player: true,
+        allow_all_players: true,
+        describe: "Raw `CheatScript` MQ command. Live-tested no-op against seabass servers — the handler logs the call but applies no state. Kept for protocol parity / future Funcom fixes.",
+        fields: CHEAT_SCRIPT_FIELDS,
+        build: BuildKind::Passthrough,
+    },
+    CommandSpec {
+        id: "ServerExec",
+        label: "Server exec (raw)",
+        category: Category::Exec,
+        destructive: None,
+        needs_player: false,
+        allow_all_players: false,
+        describe: "Raw `ServerExec` MQ command. Live-tested no-op against seabass servers — publishes successfully but does not execute useful commands. Kept for protocol parity.",
+        fields: SERVER_EXEC_FIELDS,
+        build: BuildKind::Passthrough,
+    },
     // Journey* commands removed 2026-05-26: published successfully and the
     // server-command handlers fire, but no observable state change in DB or
     // gameplay (live-tested). The `journey-nodes.json` data file remains in
     // case a working path resurfaces.
     //
-    // ServerExec / CheatScript / RunLuaScriptFile removed earlier the same
-    // day: published successfully but the seabass server's handler doesn't
-    // execute them via the MQ path — only `LogPlayerController: COMMAND`
-    // echoes, no DB or gameplay effect. Use the individual commands above.
+    // RunLuaScriptFile still omitted — non-shipping path.
 ];
 
 const fn json_const_i(n: i64) -> serde_json::Value {
