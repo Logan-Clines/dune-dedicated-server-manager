@@ -55,6 +55,9 @@ export default function WelcomePackageTab({
   const [testMessage, setTestMessage] = useState("");
   const [testOpen, setTestOpen] = useState(false);
   const [actions, setActions] = useState<WelcomeAction[]>([]);
+  const [jsonMode, setJsonMode] = useState(false);
+  const [jsonText, setJsonText] = useState("[]");
+  const [jsonError, setJsonError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [running, setRunning] = useState(false);
   const [sendingWhisper, setSendingWhisper] = useState(false);
@@ -73,7 +76,17 @@ export default function WelcomePackageTab({
       setOnlineGraceSecs(c.welcomePackageOnlineGraceSecs);
       setWhisperSourcePlayer(c.welcomeWhisperSourcePlayer ?? "");
       setWelcomeMessage(c.welcomeMessage ?? "");
-      setActions(parseActions(c.welcomePackageActionsJson || c.welcomePackageItemsJson || "[]"));
+      const rawJson = c.welcomePackageActionsJson || c.welcomePackageItemsJson || "[]";
+      setActions(parseActions(rawJson));
+      // Pretty-print and keep the JSON-mode textarea in sync with what the
+      // service is actually persisting, so toggling into JSON mode after a
+      // reload shows the current config rather than a stale buffer.
+      try {
+        setJsonText(JSON.stringify(JSON.parse(rawJson), null, 2));
+      } catch {
+        setJsonText(rawJson);
+      }
+      setJsonError(null);
       setGrants(g);
       setError(null);
     } catch (err) {
@@ -94,7 +107,16 @@ export default function WelcomePackageTab({
       if (messageEnabled && !welcomeMessage.trim()) {
         throw new Error("Enabled welcome message needs message text.");
       }
-      validateActions(actions);
+      // In JSON mode the textarea is the source of truth — validate by
+      // parsing it through the same shape check the visual editor uses.
+      let outgoingActionsJson = actionsJson;
+      if (jsonMode) {
+        const parsed = parseActions(jsonText);
+        validateActions(parsed);
+        outgoingActionsJson = JSON.stringify(parsed, null, 2);
+      } else {
+        validateActions(actions);
+      }
       await managementApi.setConfig(tunnelId, {
         welcomeMessageEnabled: messageEnabled,
         welcomePackageEnabled: enabled,
@@ -102,7 +124,7 @@ export default function WelcomePackageTab({
         welcomePackageVersion: "v1",
         welcomePackagePollSecs: pollSecs,
         welcomePackageOnlineGraceSecs: onlineGraceSecs,
-        welcomePackageActionsJson: actionsJson,
+        welcomePackageActionsJson: outgoingActionsJson,
         welcomeWhisperSourcePlayer: whisperSourcePlayer,
         welcomeMessage,
       });
@@ -124,6 +146,8 @@ export default function WelcomePackageTab({
     actions,
     actionsJson,
     enabled,
+    jsonMode,
+    jsonText,
     messageEnabled,
     onlineGraceSecs,
     pollSecs,
@@ -295,58 +319,115 @@ export default function WelcomePackageTab({
 
         <Flex justify="between" align="center" gap="3" wrap="wrap" mb="2">
           <Text size="2" weight="medium">Action chain</Text>
-          <Flex gap="2" wrap="wrap">
-            <Button
-              size="1"
-              variant="surface"
-              onClick={() =>
-                setActions((prev) => [
-                  ...prev,
-                  { type: "grantItem", itemName: "", quantity: 1, durability: 1.0 },
-                ])
-              }
-            >
-              <PlusIcon />
-              Add item grant
-            </Button>
-            <Button
-              size="1"
-              variant="surface"
-              onClick={() =>
-                setActions((prev) => [
-                  ...prev,
-                  { type: "refillWater", waterAmount: 1_000_000, delayAfterPreviousSecs: 30 },
-                ])
-              }
-            >
-              <PlusIcon />
-              Add water refill
-            </Button>
+          <Flex gap="2" wrap="wrap" align="center">
+            <Text as="label" size="1" color="gray">
+              <Flex align="center" gap="1">
+                <Checkbox
+                  checked={jsonMode}
+                  onCheckedChange={(checked) => {
+                    const next = checked === true;
+                    if (next) {
+                      // Visual -> JSON: seed the textarea from the current
+                      // actions so the operator can copy / hand-edit.
+                      setJsonText(JSON.stringify(actions, null, 2));
+                      setJsonError(null);
+                      setJsonMode(true);
+                    } else {
+                      // JSON -> Visual: parse the textarea and only switch
+                      // back if it's valid; otherwise stay in JSON mode and
+                      // show the error so nothing silently drops.
+                      try {
+                        const parsed = parseActions(jsonText);
+                        validateActions(parsed);
+                        setActions(parsed);
+                        setJsonError(null);
+                        setJsonMode(false);
+                      } catch (err) {
+                        setJsonError(String(err));
+                      }
+                    }
+                  }}
+                />
+                JSON mode
+              </Flex>
+            </Text>
+            {!jsonMode ? (
+              <>
+                <Button
+                  size="1"
+                  variant="surface"
+                  onClick={() =>
+                    setActions((prev) => [
+                      ...prev,
+                      { type: "grantItem", itemName: "", quantity: 1, durability: 1.0 },
+                    ])
+                  }
+                >
+                  <PlusIcon />
+                  Add item grant
+                </Button>
+                <Button
+                  size="1"
+                  variant="surface"
+                  onClick={() =>
+                    setActions((prev) => [
+                      ...prev,
+                      { type: "refillWater", waterAmount: 1_000_000, delayAfterPreviousSecs: 30 },
+                    ])
+                  }
+                >
+                  <PlusIcon />
+                  Add water refill
+                </Button>
+              </>
+            ) : null}
           </Flex>
         </Flex>
 
-        <Flex direction="column" gap="2">
-          {actions.length === 0 ? (
-            <Text size="2" color="gray">No actions configured.</Text>
-          ) : (
-            actions.map((action, index) => (
-              <ActionRow
-                key={`${index}:${action.type}`}
-                tunnelId={tunnelId}
-                index={index}
-                actionCount={actions.length}
-                action={action}
-                onChange={(next) =>
-                  setActions((prev) => prev.map((row, i) => (i === index ? next : row)))
-                }
-                onRemove={() => setActions((prev) => prev.filter((_, i) => i !== index))}
-                onMove={(direction) => {
-                  setActions((prev) => moveAction(prev, index, direction));
-                }}
-              />
-            ))
-          )}
-        </Flex>
+        {jsonMode ? (
+          <Flex direction="column" gap="2">
+            <TextArea
+              value={jsonText}
+              onChange={(e) => {
+                setJsonText(e.target.value);
+                if (jsonError) setJsonError(null);
+              }}
+              placeholder='[{"type":"grantItem","itemName":"PlantFiber","quantity":1,"durability":1.0}]'
+              rows={16}
+              style={{ fontFamily: "var(--code-font-family, monospace)", fontSize: 12 }}
+            />
+            {jsonError ? (
+              <Text size="1" color="red">{jsonError}</Text>
+            ) : (
+              <Text size="1" color="gray">
+                Raw JSON of the action chain. Saved verbatim after validation. Toggle JSON mode off to switch back to the visual editor.
+              </Text>
+            )}
+          </Flex>
+        ) : (
+          <Flex direction="column" gap="2">
+            {actions.length === 0 ? (
+              <Text size="2" color="gray">No actions configured.</Text>
+            ) : (
+              actions.map((action, index) => (
+                <ActionRow
+                  key={`${index}:${action.type}`}
+                  tunnelId={tunnelId}
+                  index={index}
+                  actionCount={actions.length}
+                  action={action}
+                  onChange={(next) =>
+                    setActions((prev) => prev.map((row, i) => (i === index ? next : row)))
+                  }
+                  onRemove={() => setActions((prev) => prev.filter((_, i) => i !== index))}
+                  onMove={(direction) => {
+                    setActions((prev) => moveAction(prev, index, direction));
+                  }}
+                />
+              ))
+            )}
+          </Flex>
+        )}
       </Box>
 
       {restartRequired ? (
