@@ -162,6 +162,11 @@ CREATE TABLE welcome_grant_actions (
         ON DELETE CASCADE
 );
 
+-- Drop legacy 'pending' rows. Older builds wrote a 'pending' grant for
+-- every scanned player whether or not the package was ever delivered; the
+-- new worker only writes 'granted'/'failed' and skips any account with an
+-- existing row, so carrying pending rows over would permanently block those
+-- players with no UI recovery. Dropping them lets the new worker re-evaluate.
 INSERT OR IGNORE INTO welcome_grants (
     player_id, package_version, account_id, character_name, status,
     detected_at, updated_at, granted_at, attempts, last_online_status,
@@ -171,22 +176,25 @@ SELECT
     player_id, package_version, account_id, character_name, status,
     detected_at, updated_at, granted_at, attempts, last_online_status,
     first_online_at, last_error
-FROM welcome_grants_old;
+FROM welcome_grants_old
+WHERE status <> 'pending';
 
+-- Only carry over actions whose parent grant survived, so no FK orphans.
 INSERT OR IGNORE INTO welcome_grant_actions (
     player_id, package_version, account_id, action_index, action_type, status,
     created_at, updated_at, published_at, confirmed_at, attempts,
     item_name, baseline_quantity, expected_quantity, last_error
 )
 SELECT
-    a.player_id, a.package_version, COALESCE(g.account_id, 0),
+    a.player_id, a.package_version, g.account_id,
     a.action_index, a.action_type, a.status, a.created_at, a.updated_at,
     a.published_at, a.confirmed_at, a.attempts,
     a.item_name, a.baseline_quantity, a.expected_quantity, a.last_error
 FROM welcome_grant_actions_old a
-LEFT JOIN welcome_grants_old g
+JOIN welcome_grants_old g
   ON g.player_id = a.player_id
- AND g.package_version = a.package_version;
+ AND g.package_version = a.package_version
+WHERE g.status <> 'pending';
 
 DROP TABLE welcome_grant_actions_old;
 DROP TABLE welcome_grants_old;
@@ -439,6 +447,15 @@ INSERT INTO welcome_grant_actions (
     player_id, package_version, action_index, action_type, status,
     created_at, updated_at, published_at
 ) VALUES ('P1', 'v1', -1, 'welcome_message', 'published', 'now', 'now', 'now');
+-- Legacy pending grant + action: must be dropped by the migration.
+INSERT INTO welcome_grants (
+    player_id, package_version, account_id, character_name, status,
+    detected_at, updated_at
+) VALUES ('P2', 'v1', 20, 'Leto', 'pending', 'now', 'now');
+INSERT INTO welcome_grant_actions (
+    player_id, package_version, action_index, action_type, status,
+    created_at, updated_at
+) VALUES ('P2', 'v1', 0, 'grant_item', 'pending', 'now', 'now');
 ",
             )
             .unwrap();
@@ -462,6 +479,22 @@ INSERT INTO welcome_grant_actions (
             .ensure_welcome_action("P1", "v1", 10, -1, "welcome_message")
             .unwrap();
         assert_eq!(existing.status, WelcomeActionStatus::Published);
+
+        // The granted player survived; the legacy pending player and its
+        // action were dropped (no FK orphan left behind).
+        assert!(store.welcome_grant_exists("P1", "v1", 10).unwrap());
+        assert!(!store.welcome_grant_exists("P2", "v1", 20).unwrap());
+        store
+            .with_conn(|conn| {
+                let orphans: i64 = conn.query_row(
+                    "SELECT count(*) FROM welcome_grant_actions WHERE player_id = 'P2'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(orphans, 0);
+                Ok(())
+            })
+            .unwrap();
 
         store
             .ensure_welcome_grant("P1", "v1", 11, Some("Paul"), "Online")
