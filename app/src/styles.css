@@ -1481,3 +1481,42 @@ button:disabled,
     display: none;
   }
 }
+
+/* Release-notes markdown shown in the update dialog. Bounded with scroll so a
+   long changelog stays compact, and headings are toned down to fit a dialog. */
+.release-notes-md {
+  margin-top: var(--space-1);
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: var(--font-size-2);
+  line-height: 1.5;
+  color: var(--gray-12);
+}
+.release-notes-md > :first-child {
+  margin-top: 0;
+}
+.release-notes-md h1,
+.release-notes-md h2,
+.release-notes-md h3 {
+  font-size: var(--font-size-2);
+  font-weight: 600;
+  margin: var(--space-3) 0 var(--space-1);
+}
+.release-notes-md p {
+  margin: var(--space-1) 0;
+}
+.release-notes-md ul,
+.release-notes-md ol {
+  margin: var(--space-1) 0;
+  padding-left: 1.2rem;
+}
+.release-notes-md li {
+  margin: 2px 0;
+}
+.release-notes-md code {
+  font-family: var(--code-font-family, monospace);
+  font-size: 0.9em;
+  background: var(--gray-3);
+  padding: 0 4px;
+  border-radius: 4px;
+}
