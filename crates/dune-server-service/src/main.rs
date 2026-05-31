@@ -151,6 +151,11 @@ async fn run() -> Result<()> {
     // Defaults; operator can override any of these via POST /api/config which
     // upserts into the `task_config` KV table. We apply them at startup only —
     // a change to /api/config requires a service restart to take effect.
+    // Master enable switches default to ON so existing installs (no stored
+    // row) keep their prior behavior. Backups stay gated behind a cron too.
+    let mut restart_enabled = true;
+    let mut update_enabled = true;
+    let mut backup_enabled = true;
     let mut update_lead_secs: i64 = 30 * 60;
     let mut restart_hour: u32 = 5;
     let mut restart_minute: u32 = 0;
@@ -166,6 +171,15 @@ async fn run() -> Result<()> {
     // cron expression in `backupCron`.
     let mut backup_cron: Option<cron::Schedule> = None;
     let mut backup_cron_raw: Option<String> = None;
+    if let Ok(Some(v)) = store.get_config_i64("restart_enabled") {
+        restart_enabled = v != 0;
+    }
+    if let Ok(Some(v)) = store.get_config_i64("update_enabled") {
+        update_enabled = v != 0;
+    }
+    if let Ok(Some(v)) = store.get_config_i64("backup_enabled") {
+        backup_enabled = v != 0;
+    }
     if let Ok(Some(v)) = store.get_config_i64("update_lead_secs") {
         update_lead_secs = v;
     }
@@ -236,6 +250,9 @@ async fn run() -> Result<()> {
         }
     }
     tracing::info!(
+        restart_enabled,
+        update_enabled,
+        backup_enabled,
         update_lead_secs,
         restart_hour,
         restart_minute,
@@ -263,6 +280,9 @@ async fn run() -> Result<()> {
         pg,
         bin_dir: cfg.bin_dir.clone(),
         download_path,
+        restart_enabled,
+        update_enabled,
+        backup_enabled,
         update_lead_secs,
         restart_hour,
         restart_minute,

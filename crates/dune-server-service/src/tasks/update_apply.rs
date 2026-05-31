@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -5,6 +7,7 @@ use chrono::Utc;
 use crate::kubectl::{battlegroup as bg, steam};
 use crate::scheduler::{Schedule, Task, TaskCtx, TaskOutcome};
 use crate::store::PendingUpdateRecord;
+use crate::tasks::TaskEnv;
 
 const UPDATE_RETRY_DELAY_SECS: i64 = 15 * 60;
 
@@ -12,7 +15,15 @@ const UPDATE_RETRY_DELAY_SECS: i64 = 15 * 60;
 /// whether the `pending_update` row's `due_ts` has arrived; when it has,
 /// broadcasts, runs a pre-update backup, then delegates the full
 /// check/download/apply/restart flow to the vendor `battlegroup update`.
-pub struct UpdateApplyTask;
+pub struct UpdateApplyTask {
+    env: Arc<TaskEnv>,
+}
+
+impl UpdateApplyTask {
+    pub fn new(env: Arc<TaskEnv>) -> Self {
+        Self { env }
+    }
+}
 
 #[async_trait]
 impl Task for UpdateApplyTask {
@@ -21,7 +32,11 @@ impl Task for UpdateApplyTask {
     }
 
     fn schedule(&self) -> Schedule {
-        Schedule::interval_secs(60)
+        if self.env.update_enabled {
+            Schedule::interval_secs(60)
+        } else {
+            Schedule::Disabled
+        }
     }
 
     async fn run(&self, ctx: &TaskCtx) -> Result<TaskOutcome> {

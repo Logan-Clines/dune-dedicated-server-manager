@@ -101,6 +101,11 @@ pub struct ConfigResponse {
     pub restart_warning_duration_secs: u64,
     pub update_lead_secs: i64,
     pub restart_tz: String,
+    /// Master switches for the daily restart, update loop, and scheduled
+    /// backups. Default true; backups also require `backup_cron`.
+    pub restart_enabled: bool,
+    pub update_enabled: bool,
+    pub backup_enabled: bool,
     /// `None` means scheduled backups are disabled — manual triggers still
     /// work. When set, it is the exact 5-field cron string the operator typed,
     /// evaluated in `restart_tz`.
@@ -136,6 +141,18 @@ pub async fn get_config(State(state): State<AppState>) -> Result<impl IntoRespon
         .get_config_i64("restart_warning_duration_secs")?
         .map(|v| v as u64);
     let stored_lead = state.store.get_config_i64("update_lead_secs")?;
+    let stored_restart_enabled = state
+        .store
+        .get_config_i64("restart_enabled")?
+        .map(|v| v != 0);
+    let stored_update_enabled = state
+        .store
+        .get_config_i64("update_enabled")?
+        .map(|v| v != 0);
+    let stored_backup_enabled = state
+        .store
+        .get_config_i64("backup_enabled")?
+        .map(|v| v != 0);
     let stored_backup_cron = state
         .store
         .get_config("backup_cron")?
@@ -168,6 +185,15 @@ pub async fn get_config(State(state): State<AppState>) -> Result<impl IntoRespon
             .unwrap_or(false)
         || stored_lead
             .map(|v| v != env.update_lead_secs)
+            .unwrap_or(false)
+        || stored_restart_enabled
+            .map(|v| v != env.restart_enabled)
+            .unwrap_or(false)
+        || stored_update_enabled
+            .map(|v| v != env.update_enabled)
+            .unwrap_or(false)
+        || stored_backup_enabled
+            .map(|v| v != env.backup_enabled)
             .unwrap_or(false)
         || stored_backup_cron.as_deref() != env.backup_cron_raw.as_deref()
         || stored_tz
@@ -205,6 +231,9 @@ pub async fn get_config(State(state): State<AppState>) -> Result<impl IntoRespon
         restart_warning_duration_secs: env.restart_warning_duration_secs,
         update_lead_secs: env.update_lead_secs,
         restart_tz: env.restart_tz.name().to_string(),
+        restart_enabled: env.restart_enabled,
+        update_enabled: env.update_enabled,
+        backup_enabled: env.backup_enabled,
         backup_cron: env.backup_cron_raw.clone(),
         welcome_message_enabled: env.welcome_message_enabled,
         welcome_package_enabled: env.welcome_package_enabled,
@@ -226,6 +255,9 @@ pub struct ConfigUpdate {
     pub restart_warning_duration_secs: Option<u64>,
     pub update_lead_secs: Option<i64>,
     pub restart_tz: Option<String>,
+    pub restart_enabled: Option<bool>,
+    pub update_enabled: Option<bool>,
+    pub backup_enabled: Option<bool>,
     /// Empty string clears the cron schedule (= disabled); non-empty strings
     /// are validated by `parse_cron` before being persisted.
     pub backup_cron: Option<String>,
@@ -287,6 +319,21 @@ pub async fn set_config(
             )));
         }
         state.store.set_config("restart_tz", tz)?;
+    }
+    if let Some(enabled) = req.restart_enabled {
+        state
+            .store
+            .set_config("restart_enabled", if enabled { "1" } else { "0" })?;
+    }
+    if let Some(enabled) = req.update_enabled {
+        state
+            .store
+            .set_config("update_enabled", if enabled { "1" } else { "0" })?;
+    }
+    if let Some(enabled) = req.backup_enabled {
+        state
+            .store
+            .set_config("backup_enabled", if enabled { "1" } else { "0" })?;
     }
     if let Some(expr) = req.backup_cron.as_deref() {
         let trimmed = expr.trim();

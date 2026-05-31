@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -6,12 +8,21 @@ use crate::kubectl::battlegroup as bg;
 use crate::kubectl::steam;
 use crate::scheduler::{Schedule, Task, TaskCtx, TaskOutcome};
 use crate::store::PendingUpdateRecord;
+use crate::tasks::TaskEnv;
 
 /// Replaces `scripts/cron-battlegroup-update-check`. Polls Steam for the
 /// public-branch buildid, compares it to the locally downloaded build, and on
 /// a real delta writes a `pending_update` row. `UpdateApplyTask` later invokes
 /// the vendor `battlegroup update` flow, which owns download/apply/restart.
-pub struct UpdateCheckTask;
+pub struct UpdateCheckTask {
+    env: Arc<TaskEnv>,
+}
+
+impl UpdateCheckTask {
+    pub fn new(env: Arc<TaskEnv>) -> Self {
+        Self { env }
+    }
+}
 
 #[async_trait]
 impl Task for UpdateCheckTask {
@@ -20,7 +31,11 @@ impl Task for UpdateCheckTask {
     }
 
     fn schedule(&self) -> Schedule {
-        Schedule::interval_secs(15 * 60)
+        if self.env.update_enabled {
+            Schedule::interval_secs(15 * 60)
+        } else {
+            Schedule::Disabled
+        }
     }
 
     async fn run(&self, ctx: &TaskCtx) -> Result<TaskOutcome> {

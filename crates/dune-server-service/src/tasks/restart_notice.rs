@@ -37,6 +37,12 @@ impl Task for RestartNoticeTask {
     }
 
     fn schedule(&self) -> Schedule {
+        // Tied to the daily restart switch: if auto-restart is off, the
+        // scheduled countdown would warn about a restart that never fires.
+        // Manual triggers still work regardless.
+        if !self.env.restart_enabled {
+            return Schedule::Disabled;
+        }
         // Fire `restart_warning_duration_secs` before the actual restart
         // moment, so the operator-configured lead time is honored.
         let total_minutes = self.env.restart_hour * 60 + self.env.restart_minute;

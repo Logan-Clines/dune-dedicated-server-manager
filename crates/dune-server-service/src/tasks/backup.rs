@@ -30,12 +30,14 @@ impl Task for BackupTask {
     }
 
     fn schedule(&self) -> Schedule {
-        // None -> Schedule::Disabled (operator opt-in). Vendor backups block
-        // server I/O for the whole dump, so default-off is the right call;
-        // see seb851's report of in-play perf hits with the old 2h default.
-        match self.env.backup_cron.as_ref() {
-            Some(schedule) => Schedule::Cron(Box::new(schedule.clone())),
-            None => Schedule::Disabled,
+        // Two gates: the `backup_enabled` master switch and a parsed cron.
+        // Vendor backups block server I/O for the whole dump, so a cron must be
+        // set explicitly (see seb851's report of in-play perf hits with the old
+        // 2h default). The switch lets an operator pause the cadence without
+        // discarding their cron. Either gate off -> Disabled (manual still runs).
+        match (self.env.backup_enabled, self.env.backup_cron.as_ref()) {
+            (true, Some(schedule)) => Schedule::Cron(Box::new(schedule.clone())),
+            _ => Schedule::Disabled,
         }
     }
 

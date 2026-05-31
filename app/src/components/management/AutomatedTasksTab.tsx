@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Callout,
+  Checkbox,
   Dialog,
   Flex,
   Separator,
@@ -306,6 +307,10 @@ function ScheduleSettings({
   const [warnDur, setWarnDur] = useState(1800);
   const [updateLead, setUpdateLead] = useState(1800);
   const [tz, setTz] = useState("UTC");
+  // Master switches. Undefined from older services reads as enabled.
+  const [restartEnabled, setRestartEnabled] = useState(true);
+  const [updateEnabled, setUpdateEnabled] = useState(true);
+  const [backupEnabled, setBackupEnabled] = useState(true);
   // 5-field cron (min hour dom mon dow); empty string = disabled.
   const [backupCron, setBackupCron] = useState("");
   const [backupCronStatus, setBackupCronStatus] = useState<
@@ -325,6 +330,9 @@ function ScheduleSettings({
       setWarnDur(c.restartWarningDurationSecs);
       setUpdateLead(c.updateLeadSecs);
       setTz(c.restartTz);
+      setRestartEnabled(c.restartEnabled ?? true);
+      setUpdateEnabled(c.updateEnabled ?? true);
+      setBackupEnabled(c.backupEnabled ?? true);
       setBackupCron(c.backupCron ?? "");
       setBackupCronStatus({ state: "idle" });
       setError(null);
@@ -345,6 +353,9 @@ function ScheduleSettings({
     setWarnDur(config.restartWarningDurationSecs);
     setUpdateLead(config.updateLeadSecs);
     setTz(config.restartTz);
+    setRestartEnabled(config.restartEnabled ?? true);
+    setUpdateEnabled(config.updateEnabled ?? true);
+    setBackupEnabled(config.backupEnabled ?? true);
     setBackupCron(config.backupCron ?? "");
     setBackupCronStatus({ state: "idle" });
     setEditing(true);
@@ -398,6 +409,9 @@ function ScheduleSettings({
         restartWarningDurationSecs: warnDur,
         updateLeadSecs: updateLead,
         restartTz: tz,
+        restartEnabled,
+        updateEnabled,
+        backupEnabled,
         backupCron: backupCron.trim(),
       });
 
@@ -444,6 +458,9 @@ function ScheduleSettings({
     warnDur,
     updateLead,
     tz,
+    restartEnabled,
+    updateEnabled,
+    backupEnabled,
     backupCron,
     backupCronStatus,
     refresh,
@@ -495,6 +512,17 @@ function ScheduleSettings({
 
       {editing ? (
         <Box className="schedule-grid">
+          <Text size="2">Auto restart</Text>
+          <Flex align="center" gap="2">
+            <Checkbox
+              checked={restartEnabled}
+              onCheckedChange={(checked) => setRestartEnabled(Boolean(checked))}
+            />
+            <Text size="2" color="gray">
+              Run the daily restart and its warning broadcast
+            </Text>
+          </Flex>
+
           <Text size="2">Daily restart (HH:MM)</Text>
           <Flex gap="2" align="center">
             <TextField.Root
@@ -540,12 +568,34 @@ function ScheduleSettings({
             onChange={(e) => setWarnFreq(Number(e.target.value) || 0)}
           />
 
+          <Text size="2">Auto update</Text>
+          <Flex align="center" gap="2">
+            <Checkbox
+              checked={updateEnabled}
+              onCheckedChange={(checked) => setUpdateEnabled(Boolean(checked))}
+            />
+            <Text size="2" color="gray">
+              Check Steam for new builds and apply them automatically
+            </Text>
+          </Flex>
+
           <Text size="2">Update apply lead (seconds)</Text>
           <TextField.Root
             type="number"
             value={String(updateLead)}
             onChange={(e) => setUpdateLead(Number(e.target.value) || 0)}
           />
+
+          <Text size="2">Auto backup</Text>
+          <Flex align="center" gap="2">
+            <Checkbox
+              checked={backupEnabled}
+              onCheckedChange={(checked) => setBackupEnabled(Boolean(checked))}
+            />
+            <Text size="2" color="gray">
+              Run scheduled backups (also requires a cron below)
+            </Text>
+          </Flex>
 
           <Text size="2">Backup cron (5-field; leave empty to disable)</Text>
           <Box>
@@ -562,6 +612,11 @@ function ScheduleSettings({
         </Box>
       ) : (
         <Box className="schedule-grid">
+          <Text size="2" color="gray">Auto restart</Text>
+          <Text size="2">
+            {config ? ((config.restartEnabled ?? true) ? "enabled" : "disabled") : "—"}
+          </Text>
+
           <Text size="2" color="gray">Daily restart</Text>
           <Text size="2">
             {displayHour}:{displayMinute}
@@ -580,9 +635,19 @@ function ScheduleSettings({
             {config ? `${config.restartWarningFrequencySecs}s` : "—"}
           </Text>
 
+          <Text size="2" color="gray">Auto update</Text>
+          <Text size="2">
+            {config ? ((config.updateEnabled ?? true) ? "enabled" : "disabled") : "—"}
+          </Text>
+
           <Text size="2" color="gray">Update apply lead</Text>
           <Text size="2">
             {config ? `${config.updateLeadSecs}s` : "—"}
+          </Text>
+
+          <Text size="2" color="gray">Auto backup</Text>
+          <Text size="2">
+            {config ? ((config.backupEnabled ?? true) ? "enabled" : "disabled") : "—"}
           </Text>
 
           <Text size="2" color="gray">Backup cron</Text>

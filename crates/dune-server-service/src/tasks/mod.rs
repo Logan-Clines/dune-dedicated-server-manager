@@ -26,6 +26,17 @@ pub struct TaskEnv {
     pub pg: Arc<PgClient>,
     pub bin_dir: PathBuf,
     pub download_path: PathBuf,
+    /// Master switch for the daily restart and its pre-restart warning
+    /// broadcast. Defaults to true; existing installs (no stored row) keep the
+    /// prior always-on behavior.
+    pub restart_enabled: bool,
+    /// Master switch for the automatic update check + apply loop. Defaults to
+    /// true. Manual triggers still work when disabled.
+    pub update_enabled: bool,
+    /// Master switch for scheduled backups. Defaults to true, but backups also
+    /// require `backup_cron` to be set — this flag lets an operator pause the
+    /// cadence without discarding their cron expression.
+    pub backup_enabled: bool,
     /// Lead time before a downloaded update is applied (default 1800s = 30 min).
     pub update_lead_secs: i64,
     /// Restart-notice + restart wall-clock target (default 05:00).
@@ -69,8 +80,8 @@ pub struct TaskEnv {
 pub fn build_all(env: Arc<TaskEnv>) -> Vec<Arc<dyn crate::scheduler::Task>> {
     vec![
         Arc::new(backup::BackupTask::new(env.clone())) as Arc<dyn crate::scheduler::Task>,
-        Arc::new(update_check::UpdateCheckTask),
-        Arc::new(update_apply::UpdateApplyTask),
+        Arc::new(update_check::UpdateCheckTask::new(env.clone())),
+        Arc::new(update_apply::UpdateApplyTask::new(env.clone())),
         Arc::new(restart_notice::RestartNoticeTask::new(env.clone())),
         Arc::new(restart::RestartTask::new(env.clone())),
         Arc::new(welcome_package::WelcomePackageTask::new(env.clone())),

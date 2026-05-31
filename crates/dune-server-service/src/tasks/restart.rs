@@ -31,7 +31,11 @@ impl Task for RestartTask {
     }
 
     fn schedule(&self) -> Schedule {
-        Schedule::daily(self.env.restart_hour, self.env.restart_minute)
+        if self.env.restart_enabled {
+            Schedule::daily(self.env.restart_hour, self.env.restart_minute)
+        } else {
+            Schedule::Disabled
+        }
     }
 
     async fn run(&self, ctx: &TaskCtx) -> Result<TaskOutcome> {
