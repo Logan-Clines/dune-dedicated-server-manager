@@ -14,8 +14,18 @@ import {
 import { managementApi } from "../../services/management";
 import type { PlayerDto } from "../../types/management";
 import { copyTextToClipboard } from "../../utils/clipboard";
+import { formatDateTime } from "../../utils/formatting";
 
 import type { AdminTabPrefill } from "./AdminTab";
+
+// The service sends last-seen as a UTC wall-clock string with no offset
+// ("YYYY-MM-DD HH:MM:SS"). Tag it as UTC so it localizes instead of being
+// parsed as the viewer's local time, then render in their timezone.
+function formatLastSeen(raw: string): string {
+  const s = raw.trim();
+  if (!s) return "—";
+  return formatDateTime(`${s.replace(" ", "T")}Z`);
+}
 
 export type UsersTabProps = {
   tunnelId: string;
@@ -112,7 +122,7 @@ export default function UsersTab({ tunnelId, onSwitchToAdmin }: UsersTabProps) {
             <Table.ColumnHeaderCell>Level</Table.ColumnHeaderCell>
             <Table.ColumnHeaderCell>Partition</Table.ColumnHeaderCell>
             <Table.ColumnHeaderCell>Status</Table.ColumnHeaderCell>
-            <Table.ColumnHeaderCell>Last seen (UTC)</Table.ColumnHeaderCell>
+            <Table.ColumnHeaderCell>Last seen</Table.ColumnHeaderCell>
             <Table.ColumnHeaderCell></Table.ColumnHeaderCell>
           </Table.Row>
         </Table.Header>
@@ -135,7 +145,7 @@ export default function UsersTab({ tunnelId, onSwitchToAdmin }: UsersTabProps) {
                 </Badge>
               </Table.Cell>
               <Table.Cell className="mono" style={{ fontSize: 11, color: "var(--gray-10)" }}>
-                {user.lastSeen || "—"}
+                {user.online.toLowerCase() === "online" ? "—" : formatLastSeen(user.lastSeen)}
               </Table.Cell>
               <Table.Cell>
                 <DropdownMenu.Root>
