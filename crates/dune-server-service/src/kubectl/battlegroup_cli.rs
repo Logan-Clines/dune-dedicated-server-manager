@@ -166,9 +166,28 @@ pub struct ReadySummary {
 }
 
 impl ReadySummary {
+    /// A battlegroup counts as back up once both the overall phase and the
+    /// server-group phase report a started-ish state. This mirrors the desktop
+    /// UI classifier (`is_started_phase` in dune-manager-core) which treats
+    /// `Reconciling` as up: a BG can linger at `phase=Reconciling` with
+    /// `serverGroupPhase=Running` while every map server is already reachable.
+    /// Holding out for `serverGroupPhase=="Running"` + all per-server `ready`
+    /// flags produced false restart-timeout failures (issue #20), so we gate on
+    /// the phases only and keep `ready`/`size` purely for logging.
     pub fn is_running(&self) -> bool {
-        self.server_group_phase == "Running" && self.size > 0 && self.ready == self.size
+        is_started_phase(&self.phase) && is_started_phase(&self.server_group_phase)
     }
+}
+
+/// Phases that mean "the battlegroup is started / serving", matching the
+/// desktop UI's `is_started_phase`. `Reconciling` is included on purpose: the
+/// servers are reachable in that state even though the controller has not
+/// settled back to `Running`.
+fn is_started_phase(phase: &str) -> bool {
+    matches!(
+        phase.trim().to_ascii_lowercase().as_str(),
+        "running" | "ready" | "healthy" | "available" | "reconciling"
+    )
 }
 
 pub async fn ready_summary(
@@ -214,4 +233,36 @@ pub async fn ready_summary(
         ready,
         size,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn summary(phase: &str, sgp: &str, ready: u32, size: u32) -> ReadySummary {
+        ReadySummary {
+            phase: phase.to_string(),
+            server_group_phase: sgp.to_string(),
+            ready,
+            size,
+        }
+    }
+
+    #[test]
+    fn reconciling_bg_is_running_even_with_lagging_ready_flags() {
+        // Issue #20: real payload was phase=Reconciling, serverGroupPhase=Running
+        // with per-server ready flags not yet flipped. Servers were reachable, so
+        // the gate must accept it instead of timing out at 1200s.
+        assert!(summary("Reconciling", "Running", 0, 3).is_running());
+        assert!(summary("Reconciling", "Reconciling", 1, 3).is_running());
+        assert!(summary("Running", "Running", 3, 3).is_running());
+    }
+
+    #[test]
+    fn stopped_or_empty_phase_is_not_running() {
+        assert!(!summary("Stopped", "Stopped", 0, 0).is_running());
+        assert!(!summary("", "", 0, 0).is_running());
+        // serverGroupPhase still tearing down -> not up yet.
+        assert!(!summary("Reconciling", "Stopped", 0, 3).is_running());
+    }
 }
