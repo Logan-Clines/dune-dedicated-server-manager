@@ -18,6 +18,10 @@ function getMapNumber(map: string): number {
   return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
 }
 
+function cleanMapName(map: string): string {
+  return map.replace(/\s*#\d+/, "").trim();
+}
+
 export default function ServerStatsTable({ rows }: ServerStatsTableProps) {
   if (rows.length === 0) return null;
 
@@ -34,13 +38,14 @@ export default function ServerStatsTable({ rows }: ServerStatsTableProps) {
         <span>Players</span>
         <span className="server-stats-cell-age">Age</span>
       </div>
+
       {sortedRows.map((row, index) => (
         <div
           key={`${row.map}-${row.age}-${index}`}
           className="server-stats-row"
           data-tone={phaseTone(row.phase)}
         >
-          <span>{row.map}</span>
+          <span>{cleanMapName(row.map)}</span>
           <span className="server-stats-cell-phase">{row.phase}</span>
           <span>{row.ready}</span>
           <span>{row.players}</span>
