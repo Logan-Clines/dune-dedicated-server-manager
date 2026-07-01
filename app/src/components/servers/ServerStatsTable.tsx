@@ -13,12 +13,18 @@ function phaseTone(phase: string): StatusTone {
   return "gray";
 }
 
-/**
- * Compact per-map game-server table parsed from the vendor `battlegroup
- * status` output. Mirrors the wrapper's "Game Servers" section.
- */
+function getMapNumber(map: string): number {
+  const match = map.match(/#(\d+)/);
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+}
+
 export default function ServerStatsTable({ rows }: ServerStatsTableProps) {
   if (rows.length === 0) return null;
+
+  const sortedRows = [...rows].sort(
+    (a, b) => getMapNumber(a.map) - getMapNumber(b.map)
+  );
+
   return (
     <div className="server-stats">
       <div className="server-stats-header">
@@ -28,7 +34,7 @@ export default function ServerStatsTable({ rows }: ServerStatsTableProps) {
         <span>Players</span>
         <span className="server-stats-cell-age">Age</span>
       </div>
-      {rows.map((row, index) => (
+      {sortedRows.map((row, index) => (
         <div
           key={`${row.map}-${row.age}-${index}`}
           className="server-stats-row"
