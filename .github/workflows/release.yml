@@ -21,6 +21,7 @@ jobs:
   linux-service-binary:
     name: Build dune-server-service (musl)
     runs-on: ubuntu-22.04
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -98,10 +99,12 @@ jobs:
             release-artifacts/dune-server-service.service
             release-artifacts/dune-server-service.openrc
 
+
   desktop-app:
     name: Build ${{ matrix.name }} app
     needs: linux-service-binary
     runs-on: ${{ matrix.platform }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -109,12 +112,15 @@ jobs:
           - name: Windows
             platform: windows-latest
             args: --bundles nsis
+
           - name: Linux
             platform: ubuntu-22.04
             args: --bundles appimage,deb
+
           - name: macOS Apple Silicon
             platform: macos-latest
             args: --target aarch64-apple-darwin --bundles dmg
+
           - name: macOS Intel
             platform: macos-latest
             args: --target x86_64-apple-darwin --bundles dmg
@@ -139,7 +145,13 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf pkg-config libssl-dev
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            pkg-config \
+            libssl-dev
 
       - name: Install frontend dependencies
         working-directory: app
@@ -175,25 +187,11 @@ jobs:
           npm version --no-git-tag-version --allow-same-version $version
           Pop-Location
 
-          $tauriConfigPath = "app/src-tauri/tauri.conf.json"
-          $config = Get-Content $tauriConfigPath -Raw
-          $config = $config -replace '"version":\s*"[^"]+"', ('"version": "' + $version + '"')
-          # Release builds publish signed updater artifacts; the checked-in
-          # default keeps this off so local debug builds do not require
-          # TAURI_SIGNING_PRIVATE_KEY.
-          $config = $config -replace '"createUpdaterArtifacts":\s*false', '"createUpdaterArtifacts": true'
-          Set-Content -Path $tauriConfigPath -Value $config -NoNewline
-
-      # The body is set by the linux-service-binary job's softprops step.
-      # tauri-action only uploads desktop bundles + the signed updater
-      # artifacts here; we don't pass releaseBody to avoid clobbering.
       - name: Build and publish Tauri release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          VITE_ENABLE_STARTUP_UPDATE_CHECK: "true"
+          VITE_ENABLE_STARTUP_UPDATE_CHECK: "false"
         with:
           projectPath: app
           tagName: ${{ env.RELEASE_TAG }}
